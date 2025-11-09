@@ -1,0 +1,21 @@
+{
+  "client_data_id": "dummy-success-minimal-001",
+  "filename": "dummy-minimal-success.pdf",
+  "structured_data": {
+    "legal_name": "CleanStart Corp",
+    "contact_email": "contact@cleanstart-success-unique.com",
+    "contact_phone": "415-555-9999",
+    "registered_address": "456 Success Avenue, San Francisco, CA 94102",
+    "tax_id_number": "111222333",
+    "credit_score": 720,
+    "aml_risk_rating": 1,
+    "pep_status": "No",
+    "sanctions_screen_result": "Clear",
+    "registration_number": "888777666",
+    "bank_swift_code": "SUCCESS01",
+    "bank_routing_number": "123456789"
+  },
+  "created_at": "2025-11-09T12:00:00.000000",
+  "updated_at": "2025-11-09T12:00:00.000000"
+}
+
