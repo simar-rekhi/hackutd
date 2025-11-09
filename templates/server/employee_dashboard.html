@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GS Employee Review — Business Validation</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto','Helvetica','Arial',sans-serif;
+      background:linear-gradient(135deg,#0a1929 0%,#001e3c 50%,#0a1929 100%);
+      color:#eef2ff; min-height:100vh; padding:20px; background-attachment:fixed;
+    }
+    .wrap{max-width:1200px;margin:0 auto}
+    .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .brand{display:flex;gap:12px;align-items:center}
+    .badge{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(145deg,#2b6cb0,#1e40af);font-weight:800}
+    .card{background:rgba(15,23,42,.55);border:1px solid rgba(59,130,246,.25);border-radius:18px;padding:16px;backdrop-filter: blur(10px)}
+    .grid{display:grid;grid-template-columns: 340px 1fr; gap:16px}
+    .list{max-height:72vh;overflow:auto;display:flex;flex-direction:column;gap:10px}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid rgba(148,163,184,.25);border-radius:12px;background:rgba(255,255,255,.03);cursor:pointer;transition:.15s}
+    .row:hover{background:rgba(59,130,246,.08);border-color:#60a5fa}
+    .row .id{font-size:.85rem;color:#c7d2fe}
+    .chip{font-size:.75rem;padding:4px 8px;border-radius:999px;border:1px solid rgba(148,163,184,.25);color:#93c5fd}
+    .panel{min-height:72vh}
+    .title{font-size:1.05rem;color:#c7d2fe;margin-bottom:8px}
+    .subtle{color:#a5b4fc}
+    .kv{display:grid;grid-template-columns: 220px 1fr; gap:8px;align-items:center;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.2);margin-top:8px}
+    .kv .k{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#9fb3ff}
+    .kv .v{font-weight:700;color:#e0e7ff;word-break:break-word}
+    .pill{display:inline-block;margin:4px 6px 0 0;padding:6px 10px;border-radius:999px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#bfdbfe;font-weight:700;font-size:.85rem}
+    .pill.miss{background:rgba(220,38,38,.14);border-color:rgba(220,38,38,.4);color:#fecaca}
+    .section{margin-top:14px}
+    .meter{height:10px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden;margin-top:6px}
+    .bar{height:100%;background:linear-gradient(90deg,#22c55e,#16a34a);width:0%}
+    .toolbar{display:flex;gap:8px;align-items:center}
+    .btn{appearance:none;border:none;border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer}
+    .btn-secondary{background:rgba(255,255,255,.06);color:#dbeafe;border:1px solid rgba(148,163,184,.2)}
+    .empty{color:#a5b4fc;padding:10px}
+    pre.json{margin-top:10px;padding:12px;border-radius:12px;background:#0b1326;border:1px solid rgba(59,130,246,.25);overflow:auto;max-height:50vh}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="header">
+      <div class="brand">
+        <div class="badge">GS</div>
+        <div>
+          <div style="font-weight:800">Business Validation</div>
+          <div class="subtle" style="font-size:.95rem">Employee Dashboard — Client Data Review</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <a class="btn btn-secondary" href="/login">Switch Account</a>
+      </div>
+    </header>
+
+    <section class="grid">
+      <aside class="card">
+        <div class="title">Clients (from <code>client_data/</code>)</div>
+        <div id="clientList" class="list"></div>
+      </aside>
+
+      <main class="card panel">
+        <div class="title">Details</div>
+        <div id="detail" class="empty">Select a client from the left.</div>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    const listEl = document.getElementById('clientList');
+    const detailEl = document.getElementById('detail');
+
+    function fmt(v){ return (v === null || v === undefined || v === '') ? '—' : v; }
+
+    function renderList(items){
+      listEl.innerHTML = '';
+      if (!items || !items.length){
+        listEl.innerHTML = '<div class="empty">No client JSON found.</div>';
+        return;
+      }
+      for (const it of items){
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `
+          <div>
+            <div style="font-weight:800">${fmt(it.preview.legal_name) || it.filename}</div>
+            <div class="id">${it.client_data_id}</div>
+          </div>
+          <div class="chip">${it.required_present}/${it.required_total} · ${it.completeness_pct}%</div>
+        `;
+        row.addEventListener('click', ()=> loadClient(it.client_data_id));
+        listEl.appendChild(row);
+      }
+    }
+
+    function meter(pct){
+      return `
+        <div class="meter"><div class="bar" style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>
+        <div class="subtle" style="margin-top:6px">${pct}% complete (required fields)</div>
+      `;
+    }
+
+    function kv(k, v){ return `<div class="kv"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`; }
+
+    function renderDetail(payload){
+      const s = payload.summary;
+      const raw = payload.raw || {};
+      const sd = (raw.structured_data || {});
+      const miss = s.required_missing || [];
+
+      detailEl.classList.remove('empty');
+      detailEl.innerHTML = `
+        <div class="section">
+          <div style="font-weight:800;font-size:1.05rem">${fmt(sd.legal_name) || s.filename}</div>
+          <div class="subtle">${s.client_data_id} • File: ${s.filename}</div>
+          ${meter(s.completeness_pct)}
+        </div>
+
+        <div class="section">
+          <div style="font-weight:800;margin-bottom:6px">Key Info</div>
+          ${kv('Legal Name', sd.legal_name)}
+          ${kv('Registration #', sd.registration_number)}
+          ${kv('Entity Type', sd.entity_type)}
+          ${kv('Registered Address', sd.registered_address)}
+          ${kv('Contact Name', sd.contact_name)}
+          ${kv('Contact Email', sd.contact_email)}
+          ${kv('Contact Phone', sd.contact_phone)}
+          ${kv('Tax ID Type', sd.tax_id_type)}
+          ${kv('Tax ID Number', sd.tax_id_number)}
+          ${kv('W9/W8 Type', sd['w9_w8_form_type'])}
+        </div>
+
+        <div class="section">
+          <div style="font-weight:800;margin-bottom:6px">Missing Required Fields (${miss.length})</div>
+          <div>${miss.length ? miss.map(m => `<span class="pill miss">${m.replace(/_/g,' ')}</span>`).join('') : '<span class="pill">None 🎉</span>'}</div>
+        </div>
+
+        <div class="section">
+          <div style="font-weight:800;margin-bottom:6px">Raw JSON</div>
+          <pre class="json">${JSON.stringify(raw, null, 2)}</pre>
+        </div>
+      `;
+    }
+
+    async function loadList(){
+      const res = await fetch('/api/clients');
+      const data = await res.json();
+      renderList(data.documents || []);
+    }
+
+    async function loadClient(id){
+      detailEl.innerHTML = '<div class="subtle">Loading…</div>';
+      const res = await fetch(`/api/clients/${encodeURIComponent(id)}`);
+      if (!res.ok){
+        detailEl.innerHTML = '<div class="subtle">Failed to load client.</div>';
+        return;
+      }
+      const payload = await res.json();
+      renderDetail(payload);
+    }
+
+    loadList();
+  </script>
+</body>
+</html>

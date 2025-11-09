@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Employee Info</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto','Helvetica','Arial',sans-serif;
+      background:linear-gradient(135deg,#0a1929 0%,#001e3c 50%,#0a1929 100%);
+      background-attachment:fixed;min-height:100vh;color:#fff;display:grid;place-items:center;position:relative;padding:20px
+    }
+    body::before{
+      content:'';position:fixed;inset:0;
+      background:
+        radial-gradient(circle at 20% 30%,rgba(0,123,255,.12) 0%,transparent 50%),
+        radial-gradient(circle at 80% 70%,rgba(79,195,247,.08) 0%,transparent 50%);
+      pointer-events:none;animation:shift 20s ease-in-out infinite
+    }
+    @keyframes shift{0%,100%{opacity:.6;transform:scale(1) rotate(0)}50%{opacity:.9;transform:scale(1.1) rotate(2deg)}}
+
+    .card{
+      background:rgba(15,30,50,.72);backdrop-filter:blur(20px);
+      border:1px solid rgba(255,255,255,.1);border-radius:20px;
+      box-shadow:0 10px 40px rgba(0,0,0,.3);padding:28px; width:min(92vw,720px)
+    }
+    h1{font-size:22px;letter-spacing:-.02em;margin-bottom:14px}
+    .sub{font-size:13px;color:rgba(255,255,255,.7);margin-bottom:18px}
+
+    .row{
+      display:grid;grid-template-columns: 180px 1fr;gap:10px;align-items:center;
+      padding:10px 12px;border-radius:12px;
+      background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);margin-bottom:10px
+    }
+    .label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.65)}
+    .value{font-weight:800;color:#4fc3f7;word-break:break-word}
+
+    .actions{display:flex;justify-content:flex-end;margin-top:14px}
+    .btn{
+      padding:12px 18px;border-radius:10px;border:none;cursor:pointer;font-weight:800;font-size:14px;
+      background:linear-gradient(135deg,#007bff 0%,#0056d6 100%);color:#fff;
+      box-shadow:0 6px 18px rgba(0,123,255,.35);transition:transform .2s,box-shadow .2s
+    }
+    .btn:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(0,123,255,.55)}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Employee Information</h1>
+    <div class="sub">Parsed from JSON and shown below:</div>
+
+    <!-- Render target -->
+    <div id="info"></div>
+
+    <div class="actions">
+      <button class="btn" id="readBtn" onclick="ack()">I read</button>
+    </div>
+  </main>
+
+  <script>
+    // 1) Initialize a JSON object (mock data)
+    const data = {
+      name: "SNeha Nnangunoro",
+      employeeId: "GS-318204",
+      email: "sneha.nnangunoro@gs.com",
+      role: "Analyst",
+      department: "Global Markets — Equities",
+      location: "New York · 200 West St · 15E",
+      manager: "Daniel Kim",
+      status: "Active"
+    };
+
+    // 2) Parse through the JSON object and assign to variables
+    const name = data.name;
+    const employeeId = data.employeeId;
+    const email = data.email;
+    const role = data.role;
+    const department = data.department;
+    const location = data.location;
+    const manager = data.manager;
+    const status = data.status;
+
+    // 3) Print out each variable in a neat way
+    const info = document.getElementById('info');
+
+    function row(label, value){
+      const div = document.createElement('div');
+      div.className = 'row';
+      div.innerHTML = `<div class="label">${label}</div><div class="value">${value || '—'}</div>`;
+      return div;
+    }
+
+    info.append(
+      row('Name', name),
+      row('Employee ID', employeeId),
+      row('Email', email),
+      row('Role', role),
+      row('Department', department),
+      row('Location', location),
+      row('Manager', manager),
+      row('Status', status)
+    );
+
+    // "I read" handler
+    function ack(){
+      const btn = document.getElementById('readBtn');
+      btn.textContent = 'Noted';
+      btn.disabled = true;
+      btn.style.opacity = 0.85;
+    }
+  </script>
+</body>
+</html>

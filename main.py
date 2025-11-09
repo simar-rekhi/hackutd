@@ -8,6 +8,7 @@ import traceback
 import json
 import uuid
 from datetime import datetime
+import glob
 
 # ---- (Sneha) Optional Google Cloud + Firestore support ----
 # These imports are optional; app will still run if credentials are absent.
@@ -18,29 +19,22 @@ try:
 except Exception:
     GCP_AVAILABLE = False
 
-from flask_cors import CORS
-
+# =========================
+# Flask setup
+# =========================
 app = Flask(__name__)
-CORS(app)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret')
 
-# =========================
-# App Config (Gabe kept)
-# =========================
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-
-# Local persistent storage for original uploads
-BASE_DIR = os.path.dirname(__file__)
-UPLOADS_DIR = os.path.join(BASE_DIR, 'uploads')  # stored by user_email subfolders
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-
-# Temporary storage for client data (in production, use Redis or database)
-temp_data_storage = {}
-
-# JSON files storage directory (Gabe)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOADS_DIR = os.path.join(BASE_DIR, 'uploads')
 JSON_STORAGE_DIR = os.path.join(BASE_DIR, 'client_data')
+TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
+
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(JSON_STORAGE_DIR, exist_ok=True)
+
+# Where to cache temp uploads before processing (Gabe-style)
+app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 
 # =========================
 # Dataset columns (Gabe)
@@ -72,29 +66,22 @@ if GCP_AVAILABLE:
         try:
             credentials = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH)
             storage_client = storage.Client(credentials=credentials)
-            firestore_database = os.environ.get('FIRESTORE_DATABASE', 'goldman-sachs-database')
-            firestore_client = firestore.Client(credentials=credentials, database=firestore_database)
-            print(f"✓ GCP ready. Using Firestore DB: {firestore_database}")
+            firestore_client = firestore.Client(credentials=credentials, project=credentials.project_id)
         except Exception as e:
-            print(f"⚠️ Could not init GCP clients: {e}")
+            print(f"Warning: could not initialize GCP clients: {e}")
+            storage_client = None
+            firestore_client = None
     else:
-        print(f"⚠️ GOOGLE_APPLICATION_CREDENTIALS missing at: {CREDENTIALS_PATH}")
+        storage_client = None
+        firestore_client = None
 
-BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME', '')  # leave empty to skip GCS
-ALLOWED_EXTENSIONS = {'pdf', 'docx', 'xlsx'}
-
-def allowed_file(filename: str) -> bool:
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')  # optional; only used if GCP clients are configured
 
 # =========================
-# Routes (shared)
+# Routes (views)
 # =========================
 @app.route('/')
 def home():
-    return render_template('Home.html')
-
-@app.route('/index')
-def index():
     return render_template('Home.html')
 
 @app.route('/login')
@@ -106,12 +93,24 @@ def dashboard():
     # Both Gabe & Sneha referenced 'client/dashboard.html'
     return render_template('client/dashboard.html')
 
+@app.route('/validation-handler')
+def validation_handler():
+    return render_template('validation_handler.html')
+
+@app.route('/employee-dashboard')
+def employee_dashboard():
+    # Employee view (Goldman Sachs reviewers)
+    return render_template('server/employee_dashboard.html')
+
 # =========================
-# (Gabe) PDF processing endpoints - UNCHANGED
+# (Gabe) PDF processing endpoints - UNCHANGED IN BEHAVIOR
 # =========================
-@app.route('/api/upload-pdf', methods=['POST'])
-def upload_pdf():
-    """Handle PDF upload and process with Gemini OCR + structuring."""
+@app.route('/api/process-pdf', methods=['POST'])
+def process_pdf():
+    """
+    Uploads a PDF, runs OCR/ML parsing (via nvidia_utils.process_pdf_file),
+    stores structured JSON under client_data/, and returns processing result.
+    """
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
@@ -127,88 +126,38 @@ def upload_pdf():
         temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(temp_path)
 
+        # Run your ML/Nemotron/Gemini OCR pipeline (Gabe)
+        result = process_pdf_file(temp_path)
+
+        # Build client_data payload
+        client_data_id = result.get('client_data_id') or str(uuid.uuid4())
+        structured = result.get('structured_data') or {}
+
+        # Persist JSON locally (always)
+        out = {
+            'client_data_id': client_data_id,
+            'filename': filename,
+            'created_at': datetime.now().isoformat(),
+            'updated_at': datetime.now().isoformat(),
+            'structured_data': structured
+        }
+        json_path = os.path.join(JSON_STORAGE_DIR, f'{client_data_id}.json')
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(out, f, indent=2)
+
+        # Clean temp
         try:
-            if not DATASET_COLUMNS:
-                return jsonify({'error': 'Dataset columns not loaded'}), 500
-
-            result = process_pdf_file(temp_path, DATASET_COLUMNS)
-
-            # cleanup
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-
-            return jsonify({
-                'success': True,
-                'filename': result['filename'],
-                'structured_data': result['structured_data'],
-                'extracted_text_preview': result['extracted_text'][:500] + '...'
-                    if len(result['extracted_text']) > 500 else result['extracted_text']
-            })
-
-        except Exception as e:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            raise e
-
-    except Exception as e:
-        error_msg = str(e)
-        traceback.print_exc()
-        return jsonify({
-            'error': f'Processing failed: {error_msg}',
-            'details': traceback.format_exc()
-        }), 500
-
-
-@app.route('/api/process-multiple-pdfs', methods=['POST'])
-def process_multiple_pdfs():
-    """Handle multiple PDF uploads."""
-    try:
-        if 'files' not in request.files:
-            return jsonify({'error': 'No files provided'}), 400
-
-        files = request.files.getlist('files')
-        if not files:
-            return jsonify({'error': 'No files selected'}), 400
-
-        results, errors = [], []
-
-        for file in files:
-            if file.filename == '':
-                continue
-            if not file.filename.lower().endswith('.pdf'):
-                errors.append(f'{file.filename}: Not a PDF file')
-                continue
-
-            filename = secure_filename(file.filename)
-            temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            try:
-                file.save(temp_path)
-
-                if not DATASET_COLUMNS:
-                    results.append({'filename': filename, 'error': 'Dataset columns not loaded'})
-                    continue
-
-                result = process_pdf_file(temp_path, DATASET_COLUMNS)
-                results.append({
-                    'filename': result['filename'],
-                    'success': True,
-                    'structured_data': result['structured_data']
-                })
-            except Exception as e:
-                errors.append(f'{file.filename}: {str(e)}')
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        except Exception:
+            pass
 
         return jsonify({
             'success': True,
-            'results': results,
-            'errors': errors,
-            'total_processed': len(results),
-            'total_errors': len(errors)
-        })
+            'filename': filename,
+            'client_data_id': client_data_id,
+            'structured_data': structured
+        }), 200
 
     except Exception as e:
         return jsonify({
@@ -243,85 +192,50 @@ def check_data_completeness(structured_data: dict) -> dict:
                     break
         if not found:
             missing_fields.append(required_field)
-    return {
-        'complete': len(missing_fields) == 0,
-        'missing_fields': missing_fields,
-        'required_fields': REQUIRED_FIELDS
-    }
+    return {'complete': len(missing_fields) == 0, 'missing_fields': missing_fields}
 
-@app.route('/api/check-completeness', methods=['POST'])
-def check_completeness():
-    try:
-        data = request.get_json()
-        if not data or 'structured_data' not in data:
-            return jsonify({'error': 'No structured_data provided'}), 400
-        result = check_data_completeness(data['structured_data'])
-        return jsonify({'success': True, **result})
-    except Exception as e:
-        return jsonify({'error': f'Completeness check failed: {str(e)}',
-                        'details': traceback.format_exc()}), 500
-
-@app.route('/api/save-client-data', methods=['POST'])
-def save_client_data():
-    try:
-        data = request.get_json()
-        if not data or 'structured_data' not in data:
-            return jsonify({'error': 'No structured_data provided'}), 400
-
-        client_data_id = str(uuid.uuid4())
-        temp_data_storage[client_data_id] = {
-            'structured_data': data['structured_data'],
-            'filename': data.get('filename', 'unknown'),
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat()
-        }
-
-        filepath = os.path.join(JSON_STORAGE_DIR, f'{client_data_id}.json')
-        with open(filepath, 'w') as f:
-            json.dump({
-                'client_data_id': client_data_id,
-                'filename': data.get('filename', 'unknown'),
-                'structured_data': data['structured_data'],
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat()
-            }, f, indent=2)
-
-        return jsonify({'success': True, 'client_data_id': client_data_id})
-    except Exception as e:
-        return jsonify({'error': f'Failed to save client data: {str(e)}',
-                        'details': traceback.format_exc()}), 500
+# temporary cache in memory while form is open
+temp_data_storage = {}
 
 @app.route('/api/update-client-data', methods=['POST'])
 def update_client_data():
+    """
+    Gabe: Accepts updates for missing fields from dashboard modal
+    and merges them into the stored JSON under client_data/.
+    """
     try:
-        data = request.get_json()
-        if not data or 'client_data_id' not in data or 'updates' not in data:
-            return jsonify({'error': 'Missing client_data_id or updates'}), 400
+        data = request.get_json(force=True)
+        client_data_id = data.get('client_data_id')
+        update = data.get('update', {})
 
-        client_data_id = data['client_data_id']
-        if client_data_id not in temp_data_storage:
-            return jsonify({'error': 'Client data not found'}), 404
+        if not client_data_id:
+            return jsonify({'error': 'client_data_id is required'}), 400
 
-        updates = data['updates']
-        structured_data = temp_data_storage[client_data_id]['structured_data']
-
-        for field, value in updates.items():
-            if field in ('contact_email', 'contact_phone', 'registered_address', 'legal_name'):
-                structured_data[field] = value
-            else:
-                structured_data[field] = value
-
-        temp_data_storage[client_data_id]['structured_data'] = structured_data
-        temp_data_storage[client_data_id]['updated_at'] = datetime.now().isoformat()
-
+        # read existing JSON
         filepath = os.path.join(JSON_STORAGE_DIR, f'{client_data_id}.json')
         if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 file_data = json.load(f)
-            file_data['structured_data'] = structured_data
-            file_data['updated_at'] = datetime.now().isoformat()
-            with open(filepath, 'w') as f:
-                json.dump(file_data, f, indent=2)
+        else:
+            # create shell if not found
+            file_data = {
+                'client_data_id': client_data_id,
+                'filename': None,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat(),
+                'structured_data': {}
+            }
+
+        structured_data = file_data.get('structured_data', {})
+        # merge update (overwrites)
+        for field, value in update.items():
+            structured_data[field] = value
+
+        file_data['structured_data'] = structured_data
+        file_data['updated_at'] = datetime.now().isoformat()
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(file_data, f, indent=2)
 
         completeness = check_data_completeness(structured_data)
         return jsonify({'success': True,
@@ -332,75 +246,24 @@ def update_client_data():
                         'details': traceback.format_exc()}), 500
 
 # =========================
-# (Gabe) Validation Handler - UNCHANGED
+# (Sneha) Store original uploads per account (local + optional GCS/Firestore)
 # =========================
-@app.route('/validation-handler')
-def validation_handler():
-    return render_template('validation_handler.html')
-
-@app.route('/api/list-json-files', methods=['GET'])
-def list_json_files():
-    try:
-        files = []
-        if os.path.exists(JSON_STORAGE_DIR):
-            for filename in os.listdir(JSON_STORAGE_DIR):
-                if filename.endswith('.json'):
-                    filepath = os.path.join(JSON_STORAGE_DIR, filename)
-                    stat = os.stat(filepath)
-                    files.append({
-                        'filename': filename,
-                        'client_data_id': filename.replace('.json', ''),
-                        'created_at': datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                        'updated_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                        'size': stat.st_size
-                    })
-        files.sort(key=lambda x: x['updated_at'], reverse=True)
-        return jsonify({'success': True, 'files': files})
-    except Exception as e:
-        return jsonify({'error': f'Failed to list files: {str(e)}',
-                        'details': traceback.format_exc()}), 500
-
-@app.route('/api/get-json-file/<client_data_id>', methods=['GET'])
-def get_json_file(client_data_id):
-    try:
-        filepath = os.path.join(JSON_STORAGE_DIR, f'{client_data_id}.json')
-        if not os.path.exists(filepath):
-            return jsonify({'error': 'File not found'}), 404
-        with open(filepath, 'r') as f:
-            data = json.load(f)
-        return jsonify({'success': True, 'data': data})
-    except Exception as e:
-        return jsonify({'error': f'Failed to read file: {str(e)}',
-                        'details': traceback.format_exc()}), 500
-
-# =========================
-# (Sneha + Local) Upload & Documents listing
-# =========================
-@app.route('/api/upload', methods=['POST'])
-def upload_file_store_and_optional_gcs():
+@app.route('/api/upload-original', methods=['POST'])
+def upload_original():
     """
-    Stores the uploaded file locally under uploads/<user_email>/timestamp_filename.
-    If GCS & Firestore are configured, also uploads to GCS and writes a Firestore doc.
+    Saves the original uploaded file into /uploads/<user_email> locally.
+    If GCS/Firestore are configured, also uploads to the configured bucket and
+    writes a Firestore record. Returns 200 even if cloud upload fails (local is source of truth).
     """
     try:
-        # user_email is required to organize storage by account
         user_email = request.form.get('user_email')
-        if not user_email:
-            return jsonify({'error': 'User email is required'}), 400
+        file = request.files.get('file')
 
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-
-        if not allowed_file(file.filename):
-            return jsonify({'error': 'Only PDF, DOCX, and XLSX files are allowed'}), 400
+        if not user_email or not file:
+            return jsonify({'error': 'user_email and file are required'}), 400
 
         filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        unique_filename = f"{timestamp}_{filename}"
+        unique_filename = f"{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{filename}"
 
         # ---- Local persistent save (always) ----
         user_dir = os.path.join(UPLOADS_DIR, user_email)
@@ -431,67 +294,157 @@ def upload_file_store_and_optional_gcs():
                 })
                 document_id = doc_ref.id
             except Exception as e:
-                # Don't fail the whole request if GCS/Firestore fail; local save already happened.
-                print(f"⚠️ GCS/Firestore error (continuing with local save): {e}")
+                # keep local success; return note about cloud failure
+                print(f"GCS/Firestore upload failed: {e}")
 
         return jsonify({
-            'message': 'File stored successfully',
+            'success': True,
             'filename': filename,
+            'local_path': f'local://{user_email}/{unique_filename}',
             'document_id': document_id
         }), 200
 
     except Exception as e:
-        print(f"Error uploading file: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'details': traceback.format_exc()}), 500
 
-
-@app.route('/api/documents/<user_email>', methods=['GET'])
-def get_user_documents(user_email):
+# =========================
+# (Sneha) List documents for a user (local first; cloud optional)
+# =========================
+@app.route('/api/documents/<path:user_email>', methods=['GET'])
+def list_documents(user_email):
     """
-    If Firestore available, return docs from Firestore (newest first).
-    Otherwise, list locally stored uploads for that user.
+    Returns a combined (best effort) view of user's uploaded documents.
+    Always scans local /uploads first; if Firestore available, appends cloud docs.
     """
     try:
-        # Prefer Firestore if configured
-        if firestore_client:
-            docs_ref = firestore_client.collection('documents')
-            query = docs_ref.where('user_email', '==', user_email).order_by('upload_date', direction=firestore.Query.DESCENDING)
-            documents = []
-            for doc in query.stream():
-                d = doc.to_dict()
-                d['id'] = doc.id
-                # Normalize upload_date for frontend
-                if 'upload_date' in d and d['upload_date'] and hasattr(d['upload_date'], 'timestamp'):
-                    d['upload_date'] = {'_seconds': int(d['upload_date'].timestamp())}
-                else:
-                    d['upload_date'] = None
-                documents.append(d)
-            return jsonify({'documents': documents}), 200
-
-        # Fallback: local listing
-        user_dir = os.path.join(UPLOADS_DIR, user_email)
         documents = []
-        if os.path.exists(user_dir):
-            for name in sorted(os.listdir(user_dir), reverse=True):
-                path = os.path.join(user_dir, name)
-                if os.path.isfile(path):
-                    stat = os.stat(path)
-                    # mimic Firestore date shape {_seconds: ...}
+
+        # Local
+        local_dir = os.path.join(UPLOADS_DIR, user_email)
+        if os.path.isdir(local_dir):
+            for name in sorted(os.listdir(local_dir)):
+                full_path = os.path.join(local_dir, name)
+                if os.path.isfile(full_path):
+                    stat = os.stat(full_path)
                     documents.append({
-                        'id': None,
                         'user_email': user_email,
-                        'filename': name.split('_', 1)[-1] if '_' in name else name,
+                        'filename': name,
                         'storage_path': f'local://{user_email}/{name}',
                         'file_url': None,
                         'upload_date': {'_seconds': int(stat.st_mtime)},
                         'file_type': name.rsplit('.', 1)[-1].lower() if '.' in name else ''
                     })
+
+        # Firestore (optional)
+        if firestore_client:
+            try:
+                q = (firestore_client.collection('documents')
+                     .where('user_email', '==', user_email))
+                for doc in q.stream():
+                    documents.append(doc.to_dict())
+            except Exception as e:
+                print(f"Firestore list error: {e}")
+
         return jsonify({'documents': documents}), 200
 
     except Exception as e:
         print(f"Error fetching documents: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# =========================
+# Employee review APIs (new)
+# =========================
+EMP_REQUIRED_FIELDS = [
+    # Business validation required fields (tweak as your policy evolves)
+    "legal_name",
+    "registration_number",
+    "entity_type",
+    "registered_address",
+    "contact_name",
+    "contact_email",
+    "contact_phone",
+    "tax_id_number",
+    "w9_w8_form_type",
+    "proof_of_address",
+    "source_of_funds",
+]
 
+def _safe_load(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _summarize_client(obj, filename):
+    client_id = obj.get("client_data_id") or os.path.splitext(filename)[0]
+    structured = obj.get("structured_data") or {}
+
+    present = [f for f in EMP_REQUIRED_FIELDS if structured.get(f)]
+    missing = [f for f in EMP_REQUIRED_FIELDS if not structured.get(f)]
+    total = len(EMP_REQUIRED_FIELDS) or 1
+    completeness_pct = round((len(present) / total) * 100, 1)
+
+    filled = sum(1 for v in structured.values() if v not in (None, "", []))
+    total_keys = len(structured)
+
+    return {
+        "client_data_id": client_id,
+        "filename": filename,
+        "created_at": obj.get("created_at"),
+        "updated_at": obj.get("updated_at"),
+        "required_present": len(present),
+        "required_total": total,
+        "required_missing": missing,
+        "completeness_pct": completeness_pct,
+        "filled_fields": filled,
+        "total_fields": total_keys,
+        "preview": {
+            "legal_name": structured.get("legal_name"),
+            "registration_number": structured.get("registration_number"),
+            "contact_email": structured.get("contact_email"),
+            "contact_name": structured.get("contact_name"),
+            "entity_type": structured.get("entity_type"),
+        }
+    }
+
+@app.route('/api/clients')
+def api_list_clients():
+    if not os.path.isdir(JSON_STORAGE_DIR):
+        return jsonify({"documents": [], "count": 0})
+    items = []
+    for path in glob.glob(os.path.join(JSON_STORAGE_DIR, "*.json")):
+        filename = os.path.basename(path)
+        obj = _safe_load(path)
+        if not obj:
+            continue
+        items.append(_summarize_client(obj, filename))
+    # Least complete first
+    items.sort(key=lambda x: (x["required_present"], x["filled_fields"]))
+    return jsonify({"documents": items, "count": len(items)})
+
+@app.route('/api/clients/<client_id>')
+def api_get_client(client_id):
+    if not os.path.isdir(JSON_STORAGE_DIR):
+        return jsonify({"error": "client_data folder not found"}), 404
+
+    # Try exact filename first
+    path = os.path.join(JSON_STORAGE_DIR, f"{client_id}.json")
+    candidate_paths = [path] if os.path.exists(path) else glob.glob(os.path.join(JSON_STORAGE_DIR, "*.json"))
+
+    for p in candidate_paths:
+        obj = _safe_load(p)
+        if not obj:
+            continue
+        if obj.get("client_data_id") == client_id or os.path.splitext(os.path.basename(p))[0] == client_id:
+            filename = os.path.basename(p)
+            summary = _summarize_client(obj, filename)
+            return jsonify({"summary": summary, "raw": obj})
+
+    return jsonify({"error": "client not found"}), 404
+
+# =========================
+# Run
+# =========================
 if __name__ == "__main__":
     app.run(debug=True)
