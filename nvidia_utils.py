@@ -246,36 +246,191 @@ def structure_extracted_data(extracted_text: str, dataset_columns: list) -> Dict
         if len(dataset_columns) > 50:
             columns_str += f" ... and {len(dataset_columns) - 50} more columns"
         
-        prompt = f"""
-        You are extracting structured data from a document for a KYC (Know Your Customer) onboarding system.
-        
-        Below is the extracted text from a document. Please extract and structure the information according to the following dataset columns:
-        
-        {columns_str}
-        
-        Extract the following key information if available:
-        - Legal name, DBA name, entity type
-        - Registration number, jurisdiction
-        - Addresses (registered, operational, mailing)
-        - Contact information (name, email, phone, role)
-        - Tax IDs, VAT numbers
-        - Bank details (name, account, SWIFT, routing)
-        - UBO (Ultimate Beneficial Owner) information
-        - Directors, authorized signatories
-        - Government IDs
-        - Risk ratings, credit scores
-        - Any other relevant information
-        
-        Return ONLY a valid JSON object with keys matching the dataset columns.
-        Use null for missing fields.
-        Use arrays for fields that can have multiple values (like ubo_names, director_list).
-        Keep string values as strings, numbers as numbers, dates as strings in YYYY-MM-DD format.
-        
-        Extracted text:
-        {extracted_text[:10000] if len(extracted_text) > 10000 else extracted_text}
-        
-        Return the JSON object now:
-        """
+        prompt = f"""You are an expert system for extracting structured KYC (Know Your Customer) and Due Diligence data from unstructured or semi-structured documents such as onboarding forms, company profiles, certificates, compliance reports, or financial statements.
+
+Your task is to identify and extract all relevant entity attributes described below, ensuring maximum recall (extract every potentially relevant value) and clean, normalized output.
+The final output must be one JSON object with all keys present, corresponding exactly to the provided schema.
+Use null for missing data.
+If multiple values exist (e.g., multiple UBOs or directors), represent them as arrays.
+
+INSTRUCTIONS:
+
+1. Read and interpret the text contextually — account for multiple sections, embedded tables, and variations in terminology.
+   - For example, “TIN,” “EIN,” or “PAN” can map to tax_id_number.
+   - “Main office,” “HQ,” or “Headquarters” can map to registered_address.
+2. Capture every value that could be relevant to any listed attribute.
+3. Use exact key names from the provided schema.
+4. Keep:
+   - Strings as plain text.
+   - Numeric fields as integers or floats where appropriate.
+   - Dates in YYYY-MM-DD format if identifiable.
+5. Include nested or inferred details when applicable (e.g., extract issuer from a certificate or bank name from a SWIFT code).
+6. Include explicit nulls for unavailable fields.
+7. Maintain completeness and consistency.
+
+-------------------
+SCHEMA TO FILL:
+-------------------
+
+{
+  "legal_name": "",
+  "dba_name": "",
+  "entity_type": "",
+  "registration_number": "",
+  "jurisdiction": "",
+  "registered_address": "",
+  "operational_address": "",
+  "mailing_address": "",
+  "contact_name": "",
+  "contact_role": "",
+  "contact_email": "",
+  "contact_phone": "",
+  "billing_contact": "",
+  "ownership_structure": "",
+  "ubo_names": [],
+  "ubo_dob": [],
+  "ubo_nationality": [],
+  "ubo_ownership_percentage": [],
+  "director_list": [],
+  "authorized_signatories": [],
+  "government_id_type": "",
+  "government_id_number": "",
+  "proof_of_address": "",
+  "certificate_of_incorporation": "",
+  "articles_of_association": "",
+  "business_license": "",
+  "shareholder_register": "",
+  "tax_id_type": "",
+  "tax_id_number": "",
+  "vat_gst_registration": "",
+  "tax_residency_country": "",
+  "w9_w8_form_type": "",
+  "fatca_crs_certification": "",
+  "source_of_funds": "",
+  "source_of_wealth_docs": "",
+  "purpose_of_account": "",
+  "pep_status": "",
+  "sanctions_screen_result": "",
+  "adverse_media_screen": "",
+  "aml_risk_rating": "",
+  "regulatory_licenses": "",
+  "financial_statements": "",
+  "management_accounts": "",
+  "credit_score": "",
+  "credit_reference": "",
+  "bank_name": "",
+  "bank_account_number_masked": "",
+  "bank_swift_code": "",
+  "bank_routing_number": "",
+  "beneficiary_bank_details": "",
+  "pricing_schedule": "",
+  "payment_terms": "",
+  "currency": "",
+  "fee_schedule": "",
+  "insurance_provider": "",
+  "insurance_policy_number": "",
+  "insurance_type": "",
+  "insurance_expiry_date": "",
+  "soc2_report": "",
+  "iso27001_cert": "",
+  "penetration_test_summary": "",
+  "data_flow_diagram": "",
+  "data_storage_location": "",
+  "encryption_standards": "",
+  "business_continuity_plan": "",
+  "disaster_recovery_plan": "",
+  "data_privacy_compliance (GDPR/CCPA)": "",
+  "data_processing_addendum": "",
+  "subcontractor_list": [],
+  "4th_party_list": [],
+  "escalation_contacts": [],
+  "slas": "",
+  "kpis": "",
+  "uptime_guarantee": "",
+  "integration_requirements": "",
+  "api_access": "",
+  "cybersecurity_posture_summary": "",
+  "authentication_method": "",
+  "bcp_rto": "",
+  "bcp_rpo": "",
+  "conflict_of_interest_declaration": "",
+  "legal_disputes_history": "",
+  "bankruptcy_history": "",
+  "regulatory_actions_disclosed": "",
+  "msasigned": "",
+  "nda_signed": "",
+  "service_agreement_scope": "",
+  "contract_termination_clause": "",
+  "consent_for_info_sharing": "",
+  "audit_rights": "",
+  "on_site_audit_report": "",
+  "risk_assessment_rating": "",
+  "watchlist_monitoring_consent": "",
+  "review_frequency": "",
+  "change_notification_policy": "",
+  "renewal_notice_period": "",
+  "key_personnel_list": [],
+  "implementation_plan": "",
+  "go_live_date": "",
+  "transaction_limits": "",
+  "transaction_monitoring_thresholds": "",
+  "expected_transaction_profile": "",
+  "custodial_instructions": "",
+  "settlement_instructions": "",
+  "account_structure": "",
+  "trading_limits": "",
+  "product_type": "",
+  "services_requested": "",
+  "api_credentials": "",
+  "connectivity_requirements": "",
+  "test_environment_access": "",
+  "proof_of_insurance": "",
+  "proof_of_license": "",
+  "adverse_event_notification": "",
+  "ongoing_monitoring_trigger": "",
+  "jurisdiction_risk": "",
+  "country_risk": "",
+  "negative_media_alerts": "",
+  "comments_notes": ""
+}
+
+-------------------
+EXTRACTION CONTEXT:
+-------------------
+
+When extracting:
+- Addresses: detect variations (registered, operational, mailing) using context keywords (e.g., “registered office,” “branch address,” “correspondence address”).
+- UBOs: include every beneficial owner’s name, DOB, nationality, and ownership % as aligned arrays.
+- Risk indicators: identify values related to AML risk, PEP, sanctions, adverse media, etc.
+- Bank details: include masked accounts, SWIFT, routing, and beneficiary details.
+- Compliance & security: extract presence or absence of certifications (ISO27001, SOC2), data handling standards, recovery plans, etc.
+- Legal & contractual: detect NDA/MSA status, service scope, audit rights, termination clauses, and notification policies.
+- Operational & financial: capture payment terms, pricing, currency, credit score, limits, fees, and SLAs.
+- Technical: record API access, integration needs, authentication methods, and testing environments.
+
+-------------------
+FINAL OUTPUT:
+-------------------
+
+- Return ONLY one valid JSON object (no explanations or additional text).
+- Ensure all keys from the schema exist (use null for missing ones).
+- Capture every plausible value (for arrays, include all instances).
+- Keep formatting consistent and machine-readable.
+
+-------------------
+EXAMPLE HEADER TO USE:
+-------------------
+
+You are extracting structured data for a KYC/AML onboarding system.
+
+Below is the extracted text from a document. Please extract and structure the information according to the following schema:
+{columns_str}
+
+Extracted text:
+{extracted_text}
+
+Return only one valid JSON object with keys matching the schema.
+"""
         
         # Prepare the request payload matching Brev's API format
         payload = {
