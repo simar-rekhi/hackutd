@@ -41,9 +41,11 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import roc_auc_score
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Union
 import pickle
 import os
+import json
+import uuid
 
 # ----------------------------
 # Utilities
@@ -534,6 +536,150 @@ class ClientValidator:
         return result
 
 # ----------------------------
+# JSON-based validation functions
+# ----------------------------
+
+def validate_client_from_json(
+    json_input: Union[str, Dict[str, Any]],
+    model_path: Optional[str] = None,
+    validator: Optional[ClientValidator] = None,
+    return_details: bool = True
+) -> Dict[str, Any]:
+    """
+    Validate a client from JSON input.
+    
+    Args:
+        json_input: Can be:
+            - Path to a JSON file (str)
+            - JSON string (str)
+            - Dictionary/JSON object (dict)
+        model_path: Path to model artifacts file (required if validator not provided)
+        validator: Pre-initialized ClientValidator instance (optional, overrides model_path)
+        return_details: If True, return detailed risk information
+    
+    Returns:
+        Dictionary with validation results:
+            - status: "Validated" or "Flagged"
+            - risk_score: Probability of fraud (0-1)
+            - triage: "Clear", "Iffy", or "Fraud"
+            - client_id: The client identifier used
+            - connections: Number of connections in graph (if return_details)
+            - f1_reuse_risk: Reuse risk score (if return_details)
+            - f2_proxy: F2 proxy value (if return_details)
+    
+    Example JSON format:
+        {
+            "client_data_id": "unique-id",
+            "structured_data": {
+                "contact_email": "email@example.com",
+                "contact_phone": "555-1234",
+                "registered_address": "123 Main St",
+                ...
+            }
+        }
+    """
+    # Parse JSON input
+    if isinstance(json_input, dict):
+        json_data = json_input
+    elif isinstance(json_input, str):
+        # Check if it's a file path
+        if os.path.isfile(json_input):
+            with open(json_input, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+        else:
+            # Assume it's a JSON string
+            json_data = json.loads(json_input)
+    else:
+        raise ValueError(f"json_input must be a dict, file path (str), or JSON string (str), got {type(json_input)}")
+    
+    # Extract client_id and structured_data
+    client_id = json_data.get("client_data_id") or json_data.get("client_id") or json_data.get("id")
+    if not client_id:
+        # Generate a unique ID if not provided
+        client_id = str(uuid.uuid4())
+    
+    structured_data = json_data.get("structured_data", {})
+    if not structured_data:
+        # If structured_data is not present, use the entire json_data as client_data
+        # (excluding metadata fields)
+        structured_data = {k: v for k, v in json_data.items() 
+                          if k not in ["client_data_id", "client_id", "id", "created_at", "updated_at", "filename"]}
+    
+    # Filter out None values from structured_data
+    client_data = {k: v for k, v in structured_data.items() if v is not None}
+    
+    # Initialize validator if not provided
+    if validator is None:
+        if model_path is None:
+            # Try default model path
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(script_dir, "model_artifacts.pkl")
+            if not os.path.exists(model_path):
+                raise ValueError(
+                    f"Model artifacts not found at {model_path}. "
+                    "Please provide model_path or train the model first."
+                )
+        validator = ClientValidator(model_path)
+    
+    # Validate client
+    result = validator.validate_client(
+        client_id=str(client_id),
+        client_data=client_data,
+        return_details=return_details
+    )
+    
+    # Add client_id to result
+    result["client_id"] = str(client_id)
+    
+    return result
+
+def validate_clients_from_json_batch(
+    json_inputs: List[Union[str, Dict[str, Any]]],
+    model_path: Optional[str] = None,
+    validator: Optional[ClientValidator] = None,
+    return_details: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Validate multiple clients from a list of JSON inputs.
+    
+    Args:
+        json_inputs: List of JSON inputs (file paths, JSON strings, or dicts)
+        model_path: Path to model artifacts file (required if validator not provided)
+        validator: Pre-initialized ClientValidator instance (optional, overrides model_path)
+        return_details: If True, return detailed risk information
+    
+    Returns:
+        List of validation result dictionaries
+    """
+    # Initialize validator once if not provided
+    if validator is None:
+        if model_path is None:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(script_dir, "model_artifacts.pkl")
+        validator = ClientValidator(model_path)
+    
+    results = []
+    for json_input in json_inputs:
+        try:
+            result = validate_client_from_json(
+                json_input=json_input,
+                validator=validator,
+                return_details=return_details
+            )
+            results.append(result)
+        except Exception as e:
+            # Add error result
+            results.append({
+                "client_id": "unknown",
+                "status": "Error",
+                "risk_score": None,
+                "triage": "Error",
+                "error": str(e)
+            })
+    
+    return results
+
+# ----------------------------
 # Model training & threshold selection
 # ----------------------------
 
@@ -721,10 +867,9 @@ def main():
 # Example usage for inference
 # ----------------------------
 
-def example_validate_client():
+def example_validate_from_json():
     """
-    Example of how to use ClientValidator to validate new clients.
-    Shows multiple examples with different risk profiles.
+    Example of how to validate clients from JSON input using real JSON files from client_data folder.
     """
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -736,95 +881,221 @@ def example_validate_client():
         print("\nTo train: python multipersistence.py")
         return
     
+    # Get client_data directory
+    parent_dir = os.path.dirname(script_dir)
+    client_data_dir = os.path.join(parent_dir, "client_data")
+    
+    if not os.path.exists(client_data_dir):
+        print(f"Error: client_data directory not found at {client_data_dir}")
+        return
+    
+    # Find all JSON files in client_data directory
+    json_files = [f for f in os.listdir(client_data_dir) if f.endswith('.json')]
+    
+    if not json_files:
+        print(f"Error: No JSON files found in {client_data_dir}")
+        return
+    
+    print(f"Found {len(json_files)} JSON file(s) in client_data directory")
+    print("=" * 60)
+    print()
+    
+    results = []
+    
+    # Validate each JSON file
+    for i, json_file in enumerate(json_files, 1):
+        json_path = os.path.join(client_data_dir, json_file)
+        print("=" * 60)
+        print(f"Example {i}: Validating client from {json_file}")
+        print("=" * 60)
+        print(f"File path: {json_path}")
+        
+        try:
+            result = validate_client_from_json(json_path, model_path=model_path, return_details=True)
+            print("\nValidation Result:")
+            print(json.dumps(result, indent=2))
+            results.append(result)
+        except Exception as e:
+            print(f"\nError validating {json_file}: {e}")
+            results.append({
+                "client_id": json_file,
+                "status": "Error",
+                "error": str(e)
+            })
+        
+        print()
+    
+    # Summary
+    print("=" * 60)
+    print("Summary")
+    print("=" * 60)
+    for i, result in enumerate(results, 1):
+        if "error" in result:
+            print(f"Client {i} ({result.get('client_id', 'unknown')}): Error - {result.get('error', 'Unknown error')}")
+        else:
+            print(f"Client {i} ({result.get('client_id', 'unknown')}): {result.get('status', 'Unknown')} ({result.get('triage', 'Unknown')}) - Risk Score: {result.get('risk_score', 'N/A')}")
+    
+    return results
+
+def example_validate_client():
+    """
+    Example of how to use ClientValidator to validate new clients from JSON files in client_data folder.
+    """
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "model_artifacts.pkl")
+    
+    if not os.path.exists(model_path):
+        print(f"Error: Model artifacts not found at {model_path}")
+        print("Please run main() first to train and save the model.")
+        print("\nTo train: python multipersistence.py")
+        return
+    
+    # Get client_data directory
+    parent_dir = os.path.dirname(script_dir)
+    client_data_dir = os.path.join(parent_dir, "client_data")
+    
+    if not os.path.exists(client_data_dir):
+        print(f"Error: client_data directory not found at {client_data_dir}")
+        return
+    
+    # Find all JSON files in client_data directory
+    json_files = [f for f in os.listdir(client_data_dir) if f.endswith('.json')]
+    
+    if not json_files:
+        print(f"Error: No JSON files found in {client_data_dir}")
+        return
+    
     # Initialize validator
     print("Loading model artifacts...")
     validator = ClientValidator(model_path)
     print("Model loaded successfully!\n")
     
-    # Example 1: Low-risk client
+    print(f"Found {len(json_files)} JSON file(s) in client_data directory")
     print("=" * 60)
-    print("Example 1: Low-Risk Client")
-    print("=" * 60)
-    client1 = {
-        "email": "john.doe@example.com",
-        "phone": "555-0100",
-        "address": "123 Main Street, New York, NY 10001",
-        "tax_id": "12-3456789",
-    }
-    
-    result1 = validator.validate_client(
-        client_id="client_001",
-        client_data=client1,
-        return_details=True
-    )
-    
-    print(f"Status: {result1['status']}")
-    print(f"Risk Score: {result1['risk_score']:.4f}")
-    print(f"Triage: {result1['triage']}")
-    if 'connections' in result1:
-        print(f"Graph Connections: {result1['connections']}")
-        print(f"F1 Reuse Risk: {result1['f1_reuse_risk']:.4f}")
     print()
     
-    # Example 2: Client with shared identifiers (higher risk)
+    results = []
+    
+    # Validate each JSON file using the validator directly
+    for i, json_file in enumerate(json_files, 1):
+        json_path = os.path.join(client_data_dir, json_file)
+        print("=" * 60)
+        print(f"Example {i}: Validating client from {json_file}")
+        print("=" * 60)
+        print(f"File path: {json_path}")
+        
+        try:
+            # Load JSON file
+            with open(json_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+            
+            # Extract client_id and structured_data
+            client_id = json_data.get("client_data_id") or json_data.get("client_id") or json_data.get("id")
+            if not client_id:
+                client_id = os.path.splitext(json_file)[0]  # Use filename without extension
+            
+            structured_data = json_data.get("structured_data", {})
+            if not structured_data:
+                structured_data = {k: v for k, v in json_data.items() 
+                                if k not in ["client_data_id", "client_id", "id", "created_at", "updated_at", "filename"]}
+            
+            # Filter out None values
+            client_data = {k: v for k, v in structured_data.items() if v is not None}
+            
+            print(f"Client ID: {client_id}")
+            print(f"Fields with data: {len(client_data)} out of {len(structured_data)}")
+            
+            # Validate client
+            result = validator.validate_client(
+                client_id=str(client_id),
+                client_data=client_data,
+                return_details=True
+            )
+            
+            print(f"\nStatus: {result['status']}")
+            print(f"Risk Score: {result['risk_score']:.4f}")
+            print(f"Triage: {result['triage']}")
+            if 'connections' in result:
+                print(f"Graph Connections: {result['connections']}")
+                print(f"F1 Reuse Risk: {result['f1_reuse_risk']:.4f}")
+                print(f"F2 Proxy: {result['f2_proxy']:.4f}")
+            
+            result["client_id"] = str(client_id)
+            results.append(result)
+            
+        except Exception as e:
+            print(f"\nError validating {json_file}: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append({
+                "client_id": json_file,
+                "status": "Error",
+                "error": str(e)
+            })
+        
+        print()
+    
+    # Summary
     print("=" * 60)
-    print("Example 2: Client with Shared Identifiers")
-    print("=" * 60)
-    client2 = {
-        "email": "suspicious@example.com",
-        "phone": "555-9999",
-        "address": "456 Oak Avenue, Los Angeles, CA 90001",
-        "bank_swift_code": "CHASUS33",
-    }
-    
-    result2 = validator.validate_client(
-        client_id="client_002",
-        client_data=client2,
-        return_details=True
-    )
-    
-    print(f"Status: {result2['status']}")
-    print(f"Risk Score: {result2['risk_score']:.4f}")
-    print(f"Triage: {result2['triage']}")
-    if 'connections' in result2:
-        print(f"Graph Connections: {result2['connections']}")
-        print(f"F1 Reuse Risk: {result2['f1_reuse_risk']:.4f}")
-    print()
-    
-    # Example 3: Minimal data
-    print("=" * 60)
-    print("Example 3: Minimal Data Client")
-    print("=" * 60)
-    client3 = {
-        "email": "minimal@example.com",
-    }
-    
-    result3 = validator.validate_client(
-        client_id="client_003",
-        client_data=client3,
-        return_details=True
-    )
-    
-    print(f"Status: {result3['status']}")
-    print(f"Risk Score: {result3['risk_score']:.4f}")
-    print(f"Triage: {result3['triage']}")
-    if 'connections' in result3:
-        print(f"Graph Connections: {result3['connections']}")
-    
-    print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-    print(f"Client 001: {result1['status']} ({result1['triage']})")
-    print(f"Client 002: {result2['status']} ({result2['triage']})")
-    print(f"Client 003: {result3['status']} ({result3['triage']})")
+    for i, result in enumerate(results, 1):
+        if "error" in result:
+            print(f"Client {i} ({result.get('client_id', 'unknown')}): Error - {result.get('error', 'Unknown error')}")
+        else:
+            print(f"Client {i} ({result.get('client_id', 'unknown')}): {result.get('status', 'Unknown')} ({result.get('triage', 'Unknown')}) - Risk Score: {result.get('risk_score', 'N/A'):.4f}")
     
-    return [result1, result2, result3]
+    return results
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "validate":
         # Run validation example
         example_validate_client()
+    elif len(sys.argv) > 1 and sys.argv[1] == "validate-json-example":
+        # Run JSON validation example
+        example_validate_from_json()
+    elif len(sys.argv) > 1 and sys.argv[1] == "validate-json":
+        # Validate from JSON file
+        ap = argparse.ArgumentParser(description="Validate client from JSON input")
+        ap.add_argument("--json", type=str, required=True,
+                       help="Path to JSON file or JSON string")
+        ap.add_argument("--model", type=str, default=None,
+                       help="Path to model artifacts (default: model_artifacts.pkl in script directory)")
+        ap.add_argument("--output", type=str, default=None,
+                       help="Path to save JSON output (optional)")
+        ap.add_argument("--details", action="store_true", default=True,
+                       help="Include detailed risk information")
+        
+        # Parse arguments (skip first argument which is "validate-json")
+        args = ap.parse_args(sys.argv[2:])
+        
+        try:
+            result = validate_client_from_json(
+                json_input=args.json,
+                model_path=args.model,
+                return_details=args.details
+            )
+            
+            # Print result
+            print("=" * 60)
+            print("Validation Result")
+            print("=" * 60)
+            print(json.dumps(result, indent=2))
+            
+            # Save to file if requested
+            if args.output:
+                with open(args.output, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, indent=2)
+                print(f"\nResult saved to {args.output}")
+            
+            # Return result as exit code (0 = Validated, 1 = Flagged)
+            sys.exit(0 if result["status"] == "Validated" else 1)
+            
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
     else:
         # Run training
         main()
