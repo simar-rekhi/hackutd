@@ -232,218 +232,96 @@ def extract_text_from_pdf(pdf_path: str, filename: str) -> str:
         raise
 
 
+def _create_json_schema_from_columns(dataset_columns: list) -> Dict[str, Any]:
+    """
+    Convert a list of column names into a JSON schema for structured output.
+    Each column is treated as a string property (can be null).
+    """
+    properties = {}
+    for col in dataset_columns:
+        properties[col] = {
+            "type": ["string", "null"],
+            "description": f"Extracted value for {col}"
+        }
+    
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": dataset_columns,  # All columns are required (but can be null)
+        "additionalProperties": False
+    }
+
+
 def structure_extracted_data(extracted_text: str, dataset_columns: list) -> Dict[str, Any]:
     """
     Use NVIDIA Nemotron to structure extracted text according to dataset format.
+    Uses structured output API to ensure valid JSON schema compliance.
     Returns structured data dictionary matching dataset columns.
     """
     try:
         # Use Nemotron model via Brev/NIM
         model_name = os.getenv('NVIDIA_NIM_MODEL', 'nvidia/nvidia-nemotron-nano-9b-v2')
         
-        # Create column list for prompt
-        columns_str = ", ".join(dataset_columns[:50])  # Limit to first 50 for prompt size
-        if len(dataset_columns) > 50:
-            columns_str += f" ... and {len(dataset_columns) - 50} more columns"
+        # Create JSON schema from dataset columns
+        json_schema = _create_json_schema_from_columns(dataset_columns)
         
-        prompt = f"""You are an expert system for extracting structured KYC (Know Your Customer) and Due Diligence data from unstructured or semi-structured documents such as onboarding forms, company profiles, certificates, compliance reports, or financial statements.
+        # Create system prompt for extraction guidance
+        prompt = """You are an expert system for extracting structured KYC (Know Your Customer) and Due Diligence data from unstructured or semi-structured documents such as onboarding forms, company profiles, certificates, compliance reports, or financial statements.
 
-Your task is to identify and extract all relevant entity attributes described below, ensuring maximum recall (extract every potentially relevant value) and clean, normalized output.
+Your task is to identify and extract all relevant entity attributes, ensuring maximum recall (extract every potentially relevant value) and clean, normalized output.
 The final output must be one JSON object with all keys present, corresponding exactly to the provided schema.
 Use null for missing data.
-If multiple values exist (e.g., multiple UBOs or directors), represent them as arrays.
+If multiple values exist (e.g., multiple UBOs or directors), represent them as arrays (as strings containing JSON arrays).
 
 INSTRUCTIONS:
 
 1. Read and interpret the text contextually — account for multiple sections, embedded tables, and variations in terminology.
-   - For example, “TIN,” “EIN,” or “PAN” can map to tax_id_number.
-   - “Main office,” “HQ,” or “Headquarters” can map to registered_address.
+   - For example, "TIN," "EIN," or "PAN" can map to tax_id_number.
+   - "Main office," "HQ," or "Headquarters" can map to registered_address.
 2. Capture every value that could be relevant to any listed attribute.
 3. Use exact key names from the provided schema.
 4. Keep:
    - Strings as plain text.
-   - Numeric fields as integers or floats where appropriate.
+   - Numeric fields as strings containing numbers where appropriate.
    - Dates in YYYY-MM-DD format if identifiable.
 5. Include nested or inferred details when applicable (e.g., extract issuer from a certificate or bank name from a SWIFT code).
 6. Include explicit nulls for unavailable fields.
 7. Maintain completeness and consistency.
 
--------------------
-SCHEMA TO FILL:
--------------------
-
-{
-  "legal_name": "",
-  "dba_name": "",
-  "entity_type": "",
-  "registration_number": "",
-  "jurisdiction": "",
-  "registered_address": "",
-  "operational_address": "",
-  "mailing_address": "",
-  "contact_name": "",
-  "contact_role": "",
-  "contact_email": "",
-  "contact_phone": "",
-  "billing_contact": "",
-  "ownership_structure": "",
-  "ubo_names": [],
-  "ubo_dob": [],
-  "ubo_nationality": [],
-  "ubo_ownership_percentage": [],
-  "director_list": [],
-  "authorized_signatories": [],
-  "government_id_type": "",
-  "government_id_number": "",
-  "proof_of_address": "",
-  "certificate_of_incorporation": "",
-  "articles_of_association": "",
-  "business_license": "",
-  "shareholder_register": "",
-  "tax_id_type": "",
-  "tax_id_number": "",
-  "vat_gst_registration": "",
-  "tax_residency_country": "",
-  "w9_w8_form_type": "",
-  "fatca_crs_certification": "",
-  "source_of_funds": "",
-  "source_of_wealth_docs": "",
-  "purpose_of_account": "",
-  "pep_status": "",
-  "sanctions_screen_result": "",
-  "adverse_media_screen": "",
-  "aml_risk_rating": "",
-  "regulatory_licenses": "",
-  "financial_statements": "",
-  "management_accounts": "",
-  "credit_score": "",
-  "credit_reference": "",
-  "bank_name": "",
-  "bank_account_number_masked": "",
-  "bank_swift_code": "",
-  "bank_routing_number": "",
-  "beneficiary_bank_details": "",
-  "pricing_schedule": "",
-  "payment_terms": "",
-  "currency": "",
-  "fee_schedule": "",
-  "insurance_provider": "",
-  "insurance_policy_number": "",
-  "insurance_type": "",
-  "insurance_expiry_date": "",
-  "soc2_report": "",
-  "iso27001_cert": "",
-  "penetration_test_summary": "",
-  "data_flow_diagram": "",
-  "data_storage_location": "",
-  "encryption_standards": "",
-  "business_continuity_plan": "",
-  "disaster_recovery_plan": "",
-  "data_privacy_compliance (GDPR/CCPA)": "",
-  "data_processing_addendum": "",
-  "subcontractor_list": [],
-  "4th_party_list": [],
-  "escalation_contacts": [],
-  "slas": "",
-  "kpis": "",
-  "uptime_guarantee": "",
-  "integration_requirements": "",
-  "api_access": "",
-  "cybersecurity_posture_summary": "",
-  "authentication_method": "",
-  "bcp_rto": "",
-  "bcp_rpo": "",
-  "conflict_of_interest_declaration": "",
-  "legal_disputes_history": "",
-  "bankruptcy_history": "",
-  "regulatory_actions_disclosed": "",
-  "msasigned": "",
-  "nda_signed": "",
-  "service_agreement_scope": "",
-  "contract_termination_clause": "",
-  "consent_for_info_sharing": "",
-  "audit_rights": "",
-  "on_site_audit_report": "",
-  "risk_assessment_rating": "",
-  "watchlist_monitoring_consent": "",
-  "review_frequency": "",
-  "change_notification_policy": "",
-  "renewal_notice_period": "",
-  "key_personnel_list": [],
-  "implementation_plan": "",
-  "go_live_date": "",
-  "transaction_limits": "",
-  "transaction_monitoring_thresholds": "",
-  "expected_transaction_profile": "",
-  "custodial_instructions": "",
-  "settlement_instructions": "",
-  "account_structure": "",
-  "trading_limits": "",
-  "product_type": "",
-  "services_requested": "",
-  "api_credentials": "",
-  "connectivity_requirements": "",
-  "test_environment_access": "",
-  "proof_of_insurance": "",
-  "proof_of_license": "",
-  "adverse_event_notification": "",
-  "ongoing_monitoring_trigger": "",
-  "jurisdiction_risk": "",
-  "country_risk": "",
-  "negative_media_alerts": "",
-  "comments_notes": ""
-}
-
--------------------
-EXTRACTION CONTEXT:
--------------------
-
 When extracting:
-- Addresses: detect variations (registered, operational, mailing) using context keywords (e.g., “registered office,” “branch address,” “correspondence address”).
-- UBOs: include every beneficial owner’s name, DOB, nationality, and ownership % as aligned arrays.
+- Addresses: detect variations (registered, operational, mailing) using context keywords (e.g., "registered office," "branch address," "correspondence address").
+- UBOs: include every beneficial owner's name, DOB, nationality, and ownership \% as aligned arrays.
 - Risk indicators: identify values related to AML risk, PEP, sanctions, adverse media, etc.
 - Bank details: include masked accounts, SWIFT, routing, and beneficiary details.
 - Compliance & security: extract presence or absence of certifications (ISO27001, SOC2), data handling standards, recovery plans, etc.
 - Legal & contractual: detect NDA/MSA status, service scope, audit rights, termination clauses, and notification policies.
 - Operational & financial: capture payment terms, pricing, currency, credit score, limits, fees, and SLAs.
-- Technical: record API access, integration needs, authentication methods, and testing environments.
-
--------------------
-FINAL OUTPUT:
--------------------
-
-- Return ONLY one valid JSON object (no explanations or additional text).
-- Ensure all keys from the schema exist (use null for missing ones).
-- Capture every plausible value (for arrays, include all instances).
-- Keep formatting consistent and machine-readable.
-
--------------------
-EXAMPLE HEADER TO USE:
--------------------
-
-You are extracting structured data for a KYC/AML onboarding system.
-
-Below is the extracted text from a document. Please extract and structure the information according to the following schema:
-{columns_str}
-
-Extracted text:
-{extracted_text}
-
-Return only one valid JSON object with keys matching the schema.
-"""
+- Technical: record API access, integration needs, authentication methods, and testing environments."""
         
-        # Prepare the request payload matching Brev's API format
+        # Prepare the request payload for structured output API
+        # Truncate extracted text if too long
+        user_content = extracted_text[:10000] if len(extracted_text) > 10000 else extracted_text
+        
         payload = {
             "model": model_name,
             "messages": [
                 {
-                    "role": "user",
+                    "role": "system",
                     "content": prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_content
                 }
             ],
-            "top_p": 1,
-            "max_tokens": 4096,
-            "temperature": 0.1  # Lower temperature for more structured output
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "kyc_extraction",
+                    "schema": json_schema,
+                    "strict": True
+                }
+            }
         }
         
         # Make API request to Brev/NIM
@@ -468,33 +346,56 @@ Return only one valid JSON object with keys matching the schema.
         
         result = response.json()
         
-        # Extract the text from the response
-        if "choices" in result and len(result["choices"]) > 0:
-            response_text = result["choices"][0]["message"]["content"]
+        # Structured output API should return the structured data directly
+        # The exact format may vary, but typically it's in a 'output' or 'text' field
+        structured_data = None
+        
+        if "output" in result:
+            # Check if output is a string that needs parsing
+            structured_data = result["output"]
+        elif "text" in result:
+            structured_data = result["text"]
+        elif "choices" in result and len(result["choices"]) > 0:
+            # Fallback to chat completions format if API still uses it
+            choice = result["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                content = choice["message"]["content"]
+                structured_data = content
         else:
-            raise ValueError(f"Unexpected response format: {result}")
+            # Try parsing the entire result as JSON if it's the structured data
+            structured_data = result
         
-        # Parse JSON from response
-        response_text = response_text.strip()
-        
-        # Try to extract JSON if wrapped in markdown
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-        
-        structured_data = json.loads(response_text)
+        thing = "</think>"
+
+        if structured_data is not None:
+            try:
+                start_index = structured_data.index(thing)
+                if start_index != -1:
+                    start_index += len(thing)
+                    structured_data = structured_data[start_index:]
+            except ValueError:
+                pass
+
+        structured_data = structured_data.strip()
+
+        try:
+            structured_data = json.loads(structured_data)
+        except json.JSONDecodeError:
+            pass
         
         # Ensure all dataset columns are present (fill with None if missing)
         result_dict = {}
         for col in dataset_columns:
-            result_dict[col] = structured_data.get(col, None)
+            if isinstance(structured_data, dict):
+                result_dict[col] = structured_data.get(col, None)
+            else:
+                result_dict[col] = None
         
         return result_dict
     
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON from Nemotron: {e}")
-        print(f"Response was: {response_text[:500] if 'response_text' in locals() else 'N/A'}")
+        print(f"Response was: {result if 'result' in locals() else 'N/A'}")
         # Return empty structure
         return {col: None for col in dataset_columns}
     except Exception as e:
@@ -512,10 +413,12 @@ def process_pdf_file(pdf_path: str, dataset_columns: list) -> Dict[str, Any]:
     # Step 1: Extract text via OCR
     print(f"Extracting text from {filename}...")
     extracted_text = extract_text_from_pdf(pdf_path, filename)
+    print(f"Extracted text: {extracted_text}")
     
     # Step 2: Structure the data
     print(f"Structuring data from {filename}...")
     structured_data = structure_extracted_data(extracted_text, dataset_columns)
+    print(f"Structured data: {structured_data}")
     
     return {
         "filename": filename,

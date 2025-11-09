@@ -740,9 +740,29 @@
             const structuredData = result.structured_data || {};
             const nonNullData = Object.entries(structuredData).filter(([key, value]) => value !== null && value !== '');
             
+            // Helper function to format values for display
+            function formatValue(value) {
+                if (value === null || value === undefined) {
+                    return '';
+                }
+                if (typeof value === 'object') {
+                    // If it's an object or array, stringify it nicely
+                    try {
+                        return JSON.stringify(value, null, 2);
+                    } catch (e) {
+                        return String(value);
+                    }
+                }
+                return String(value);
+            }
+            
             let dataTable = '<table>';
             nonNullData.forEach(([key, value]) => {
-                dataTable += `<tr><td>${key}</td><td>${value}</td></tr>`;
+                const formattedValue = formatValue(value);
+                // Escape HTML to prevent XSS
+                const escapedKey = key.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                const escapedValue = formattedValue.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                dataTable += `<tr><td>${escapedKey}</td><td>${escapedValue}</td></tr>`;
             });
             dataTable += '</table>';
 
