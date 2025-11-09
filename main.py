@@ -23,7 +23,7 @@ else:
     storage_client = None
     firestore_client = None
 
-BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME', 'vendor-onboarding-files-mu')
+BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME', 'vendor-onboarding-files-sn')
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'xlsx'}
 
 def allowed_file(filename):
