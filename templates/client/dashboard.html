@@ -429,6 +429,90 @@
             font-weight: bold;
             width: 200px;
         }
+
+
+        .missing-data-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .missing-data-overlay.active {
+            display: flex;
+        }
+
+        .missing-data-modal {
+            background: rgba(15, 30, 50, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .missing-data-modal h2 {
+            color: #ffffff;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        .missing-data-modal p {
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 25px;
+        }
+
+        .missing-field-group {
+            margin-bottom: 20px;
+        }
+
+        .missing-field-group label {
+            display: block;
+            color: #ffffff;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .missing-field-group input,
+        .missing-field-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+            font-size: 14px;
+        }
+
+        .missing-field-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .missing-field-group input:focus,
+        .missing-field-group textarea:focus {
+            outline: none;
+            border-color: #4fc3f7;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
     </style>
 </head>
 <body>
@@ -499,9 +583,19 @@
         <div id="resultsContainer"></div>
     </div>
 
-    <div class="results-section" id="resultsSection">
-        <h2 class="tickets-header">Extracted Data Results</h2>
-        <div id="resultsContainer"></div>
+    <!-- Missing Data Modal -->
+    <div class="missing-data-overlay" id="missingDataOverlay">
+        <div class="missing-data-modal">
+            <h2>Complete Missing Information</h2>
+            <p>Please provide the following required fields to proceed with validation:</p>
+            <form id="missingDataForm">
+                <div id="missingFieldsContainer"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMissingDataModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save & Continue</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- All Auth0 JavaScript logic remains completely untouched -->
@@ -699,8 +793,9 @@
                             <span>Complete</span>
                         `;
 
-                        // Display results
+                        // Display results and check completeness
                         displayResult(result);
+                        checkCompletenessAndProceed(result);
                     } else {
                         // Update status to error
                         statusItem.className = 'status-item error';
@@ -732,10 +827,14 @@
             }, 2000);
         }
 
+        // Store current result data for validation
+        let currentResultData = {};
+
         function displayResult(result) {
             const resultsContainer = document.getElementById('resultsContainer');
             const resultDiv = document.createElement('div');
             resultDiv.className = 'result-item';
+            resultDiv.id = `result-${result.filename.replace(/[^a-zA-Z0-9]/g, '-')}`;
             
             const structuredData = result.structured_data || {};
             const nonNullData = Object.entries(structuredData).filter(([key, value]) => value !== null && value !== '');
@@ -774,7 +873,167 @@
             `;
             
             resultsContainer.appendChild(resultDiv);
+            
+            // Store result data
+            currentResultData[result.filename] = result;
         }
+
+        async function checkCompletenessAndProceed(result) {
+            try {
+                const response = await fetch('/api/check-completeness', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        structured_data: result.structured_data
+                    })
+                });
+
+                const completenessResult = await response.json();
+                
+                if (completenessResult.success) {
+                    // Save data temporarily
+                    const saveResponse = await fetch('/api/save-client-data', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            structured_data: result.structured_data,
+                            filename: result.filename
+                        })
+                    });
+
+                    const saveResult = await saveResponse.json();
+                    if (saveResult.success) {
+                        // Store client_data_id with the result
+                        result.client_data_id = saveResult.client_data_id;
+                        currentResultData[result.filename] = result;
+                        
+                        if (!completenessResult.complete) {
+                            // Show missing data modal
+                            showMissingDataModal(completenessResult.missing_fields, result);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking completeness:', error);
+            }
+        }
+
+        function showMissingDataModal(missingFields, result) {
+            const overlay = document.getElementById('missingDataOverlay');
+            const container = document.getElementById('missingFieldsContainer');
+            
+            container.innerHTML = '';
+            
+            missingFields.forEach(field => {
+                const fieldGroup = document.createElement('div');
+                fieldGroup.className = 'missing-field-group';
+                
+                const label = document.createElement('label');
+                label.textContent = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                label.setAttribute('for', `field-${field}`);
+                
+                let input;
+                if (field === 'registered_address') {
+                    input = document.createElement('textarea');
+                    input.rows = 3;
+                } else {
+                    input = document.createElement('input');
+                    if (field === 'contact_email') {
+                        input.type = 'email';
+                    } else if (field === 'contact_phone') {
+                        input.type = 'tel';
+                    }
+                }
+                
+                input.id = `field-${field}`;
+                input.name = field;
+                input.required = true;
+                input.placeholder = `Enter ${field.replace(/_/g, ' ')}`;
+                
+                fieldGroup.appendChild(label);
+                fieldGroup.appendChild(input);
+                container.appendChild(fieldGroup);
+            });
+            
+            // Store result data in form
+            const form = document.getElementById('missingDataForm');
+            form.dataset.clientDataId = result.client_data_id;
+            form.dataset.filename = result.filename;
+            
+            overlay.classList.add('active');
+        }
+
+        function closeMissingDataModal() {
+            const overlay = document.getElementById('missingDataOverlay');
+            overlay.classList.remove('active');
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('missingDataOverlay').addEventListener('click', (e) => {
+            if (e.target.id === 'missingDataOverlay') {
+                closeMissingDataModal();
+            }
+        });
+
+        document.getElementById('missingDataForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const form = e.target;
+            const clientDataId = form.dataset.clientDataId;
+            const filename = form.dataset.filename;
+            
+            const formData = new FormData(form);
+            const updates = {};
+            
+            for (const [key, value] of formData.entries()) {
+                updates[key] = value.trim();
+            }
+            
+            try {
+                const response = await fetch('/api/update-client-data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        client_data_id: clientDataId,
+                        updates: updates
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    if (result.complete) {
+                        closeMissingDataModal();
+                        // Update the stored result
+                        if (currentResultData[filename]) {
+                            currentResultData[filename].client_data_id = clientDataId;
+                        }
+                        // Enable validate button
+                        const validateBtn = document.getElementById(`validate-btn-${filename.replace(/[^a-zA-Z0-9]/g, '-')}`);
+                        if (validateBtn) {
+                            validateBtn.disabled = false;
+                        }
+                        alert('Data updated successfully! You can now proceed with validation.');
+                    } else {
+                        alert('Some fields are still missing. Please fill all required fields.');
+                        // Update modal with remaining missing fields
+                        showMissingDataModal(result.missing_fields, { client_data_id: clientDataId, filename: filename });
+                    }
+                } else {
+                    alert('Failed to update data: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error updating data:', error);
+                alert('An error occurred while updating data.');
+            }
+        });
+
 
         // Initialize
         logoutBtn.addEventListener('click', handleLogout);
