@@ -185,29 +185,12 @@
             <button class="upload-button" onclick="toggleUploadArea()">Upload Identifying Information</button>
         </div>
 
-        <div class="tickets-section">
-            <h2 class="tickets-header">Tickets</h2>
-            <ul class="ticket-list" id="ticketList">
-                <li class="ticket-item">
-                    <span class="ticket-number">#TKT-001</span>
-                    <span class="ticket-date">Published: January 15, 2024</span>
-                </li>
-                <li class="ticket-item">
-                    <span class="ticket-number">#TKT-002</span>
-                    <span class="ticket-date">Published: January 18, 2024</span>
-                </li>
-                <li class="ticket-item">
-                    <span class="ticket-number">#TKT-003</span>
-                    <span class="ticket-date">Published: January 22, 2024</span>
-                </li>
-                <li class="ticket-item">
-                    <span class="ticket-number">#TKT-004</span>
-                    <span class="ticket-date">Published: January 25, 2024</span>
-                </li>
-                <li class="ticket-item">
-                    <span class="ticket-number">#TKT-005</span>
-                    <span class="ticket-date">Published: January 28, 2024</span>
-                </li>
+        <div class="content-card">
+            <div class="section-header">
+                <h2>Your <span class="gradient-accent">Onboarding Requests</span></h2>
+            </div>
+            <ul class="ticket-list">
+                <!-- Documents will be loaded here -->
             </ul>
         </div>
     </div>
@@ -223,9 +206,105 @@
     </div>
 
     <script>
+        console.log("[v0] Dashboard - Initializing Auth0...");
+        
+        let auth0Client;
+        let currentUser = null;
         const uploadOverlay = document.getElementById('uploadOverlay');
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
+        const logoutBtn = document.getElementById('logout-btn');
+        const loadingScreen = document.getElementById('loading');
+        const dashboardContent = document.getElementById('dashboard');
+
+        async function initAuth0() {
+            try {
+                console.log("[v0] Creating Auth0 client...");
+                
+                auth0Client = await window.auth0.createAuth0Client({
+                    domain: 'dev-zr25lcrbfq321v7f.us.auth0.com',
+                    clientId: 'koEERgWqiyyNe3Ry1QSAbLtKyahWdg2y',
+                    authorizationParams: {
+                        redirect_uri: window.location.origin + '/dashboard'
+                    },
+                    cacheLocation: 'localstorage'
+                });
+
+                console.log("[v0] Auth0 client initialized");
+
+                // Handle redirect callback
+                const query = window.location.search;
+                if (query.includes('code=') && query.includes('state=')) {
+                    console.log("[v0] Handling redirect callback...");
+                    try {
+                        await auth0Client.handleRedirectCallback();
+                        window.history.replaceState({}, document.title, '/dashboard');
+                        console.log("[v0] Callback handled successfully");
+                    } catch (error) {
+                        console.error('[v0] Callback error:', error);
+                    }
+                }
+
+                // Check authentication
+                const isAuthenticated = await auth0Client.isAuthenticated();
+                console.log("[v0] Is authenticated:", isAuthenticated);
+                
+                if (!isAuthenticated) {
+                    console.log("[v0] Not authenticated, redirecting to login");
+                    window.location.href = '/login';
+                    return;
+                }
+
+                // Get user info
+                const user = await auth0Client.getUser();
+                console.log("[v0] User info retrieved:", user?.email);
+                currentUser = user;
+                displayUserInfo(user);
+
+                // Show dashboard
+                loadingScreen.style.display = 'none';
+                dashboardContent.style.display = 'block';
+
+                loadUserDocuments();
+
+            } catch (error) {
+                console.error('[v0] Auth0 initialization error:', error);
+                window.location.href = '/login';
+            }
+        }
+
+        function displayUserInfo(user) {
+            const userEmail = document.getElementById('userEmail');
+            const userAvatar = document.getElementById('userAvatar');
+
+            if (user) {
+                userEmail.textContent = user.email || user.name || 'User';
+                
+                // Set avatar with first letter of email
+                const initial = (user.email || user.name || 'U')[0].toUpperCase();
+                userAvatar.textContent = initial;
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                console.log("[v0] Logout button clicked");
+                logoutBtn.disabled = true;
+                logoutBtn.innerHTML = '<span class="spinner"></span>Logging out...';
+                
+                console.log("[v0] Calling Auth0 logout...");
+                await auth0Client.logout({
+                    logoutParams: {
+                        returnTo: window.location.origin + '/login'
+                    }
+                });
+            } catch (error) {
+                console.error('[v0] Logout error:', error);
+                alert('Logout failed. Please ensure "' + window.location.origin + '/login" is added to your Auth0 Allowed Logout URLs.');
+                logoutBtn.disabled = false;
+                logoutBtn.textContent = 'Logout';
+            }
+        }
 
         function toggleUploadArea() {
             uploadOverlay.classList.toggle('active');
@@ -270,18 +349,88 @@
             handleFiles(e.target.files);
         });
 
-        function handleFiles(files) {
-            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+        async function handleFiles(files) {
+            const pdfFiles = Array.from(files).filter(file => 
+                file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+            );
             
             if (pdfFiles.length === 0) {
                 alert('Please upload PDF files only.');
                 return;
             }
 
-            // Files uploaded - you can add functionality here
-            alert(`Successfully uploaded ${pdfFiles.length} PDF file(s).`);
+            // Upload each file
+            for (const file of pdfFiles) {
+                await uploadFile(file);
+            }
+
             toggleUploadArea();
+            loadUserDocuments(); // Refresh document list
         }
+
+        async function uploadFile(file) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('user_email', currentUser.email);
+
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    console.log('File uploaded successfully:', data);
+                    alert(`Successfully uploaded: ${file.name}`);
+                } else {
+                    console.error('Upload error:', data.error);
+                    alert(`Failed to upload ${file.name}: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                alert(`Error uploading ${file.name}`);
+            }
+        }
+
+        async function loadUserDocuments() {
+            try {
+                if (!currentUser || !currentUser.email) return;
+
+                const response = await fetch(`/api/documents/${encodeURIComponent(currentUser.email)}`);
+                const data = await response.json();
+
+                if (response.ok && data.documents) {
+                    displayDocuments(data.documents);
+                }
+            } catch (error) {
+                console.error('Error loading documents:', error);
+            }
+        }
+
+        function displayDocuments(documents) {
+            const ticketList = document.querySelector('.ticket-list');
+            
+            if (documents.length === 0) {
+                ticketList.innerHTML = '<li class="ticket-item"><span>No documents uploaded yet</span></li>';
+                return;
+            }
+
+            ticketList.innerHTML = documents.map((doc, index) => {
+                const date = doc.upload_date ? new Date(doc.upload_date._seconds * 1000).toLocaleDateString() : 'N/A';
+                return `
+                    <li class="ticket-item">
+                        <span class="ticket-number">${doc.filename}</span>
+                        <span class="ticket-date">Uploaded: ${date}</span>
+                    </li>
+                `;
+            }).join('');
+        }
+
+        // Initialize
+        logoutBtn.addEventListener('click', handleLogout);
+        window.addEventListener('load', initAuth0);
     </script>
 </body>
 </html>
