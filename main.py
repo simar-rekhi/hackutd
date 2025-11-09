@@ -15,6 +15,10 @@ def index():
 def login():
     return render_template('login.html')
 
+@app.route('/dashboard')
+def dashboard():
+    return render_template('client/dashboard.html')
+
 if __name__ == "__main__":
     app.run(debug=True)
 
