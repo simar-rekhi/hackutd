@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .dashboard-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+        }
+
+        .upload-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+
+        .upload-button:hover {
+            opacity: 0.9;
+        }
+
+        .upload-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .upload-overlay.active {
+            display: flex;
+        }
+
+        .upload-area {
+            background: white;
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 60px 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+            position: relative;
+            transition: all 0.3s;
+        }
+
+        .upload-area.drag-over {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: scale(1.02);
+        }
+
+        .close-button {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #f0f0f0;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-button:hover {
+            background: #e0e0e0;
+        }
+
+        .tickets-section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .tickets-header {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 22px;
+        }
+
+        .ticket-list {
+            list-style: none;
+        }
+
+        .ticket-item {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .ticket-item:hover {
+            background: #f8f9ff;
+        }
+
+        .ticket-item:last-child {
+            border-bottom: none;
+        }
+
+        .ticket-number {
+            font-weight: bold;
+            color: #667eea;
+            font-size: 16px;
+        }
+
+        .ticket-date {
+            color: #888;
+            font-size: 14px;
+        }
+
+        .upload-icon {
+            font-size: 64px;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            color: #555;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #888;
+            font-size: 14px;
+        }
+
+        .file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="header">
+            <h1>Client Dashboard</h1>
+            <button class="upload-button" onclick="toggleUploadArea()">Upload Identifying Information</button>
+        </div>
+
+        <div class="tickets-section">
+            <h2 class="tickets-header">Tickets</h2>
+            <ul class="ticket-list" id="ticketList">
+                <li class="ticket-item">
+                    <span class="ticket-number">#TKT-001</span>
+                    <span class="ticket-date">Published: January 15, 2024</span>
+                </li>
+                <li class="ticket-item">
+                    <span class="ticket-number">#TKT-002</span>
+                    <span class="ticket-date">Published: January 18, 2024</span>
+                </li>
+                <li class="ticket-item">
+                    <span class="ticket-number">#TKT-003</span>
+                    <span class="ticket-date">Published: January 22, 2024</span>
+                </li>
+                <li class="ticket-item">
+                    <span class="ticket-number">#TKT-004</span>
+                    <span class="ticket-date">Published: January 25, 2024</span>
+                </li>
+                <li class="ticket-item">
+                    <span class="ticket-number">#TKT-005</span>
+                    <span class="ticket-date">Published: January 28, 2024</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="upload-overlay" id="uploadOverlay">
+        <div class="upload-area" id="uploadArea">
+            <button class="close-button" onclick="toggleUploadArea()">×</button>
+            <div class="upload-icon">📄</div>
+            <div class="upload-text">Drag and drop PDF files here</div>
+            <div class="upload-hint">or click to browse</div>
+            <input type="file" id="fileInput" class="file-input" accept=".pdf" multiple>
+        </div>
+    </div>
+
+    <script>
+        const uploadOverlay = document.getElementById('uploadOverlay');
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        function toggleUploadArea() {
+            uploadOverlay.classList.toggle('active');
+        }
+
+        // Close overlay when clicking outside
+        uploadOverlay.addEventListener('click', (e) => {
+            if (e.target === uploadOverlay) {
+                toggleUploadArea();
+            }
+        });
+
+        // Click to browse
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target !== uploadArea.querySelector('.close-button')) {
+                fileInput.click();
+            }
+        });
+
+        // Drag and drop events
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('drag-over');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        function handleFiles(files) {
+            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+            
+            if (pdfFiles.length === 0) {
+                alert('Please upload PDF files only.');
+                return;
+            }
+
+            // Files uploaded - you can add functionality here
+            alert(`Successfully uploaded ${pdfFiles.length} PDF file(s).`);
+            toggleUploadArea();
+        }
+    </script>
+</body>
+</html>
+
