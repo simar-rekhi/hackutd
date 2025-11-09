@@ -3,7 +3,7 @@ import os
 import pandas as pd
 from werkzeug.utils import secure_filename
 import tempfile
-from gemini_utils import process_pdf_file
+from nvidia_utils import process_pdf_file
 import traceback
 
 app = Flask(__name__)
