@@ -17,18 +17,26 @@ except ImportError:
     pass
 
 # Get configuration from environment variables
+# These are SEPARATE servers - configure them independently
+
+# Nemotron-Parse VLM Server (for PDF/image OCR processing)
+# This is a different server from the LLM server
+NVIDIA_NIM_VLM_API_KEY = os.getenv('NVIDIA_NIM_VLM_API_KEY', os.getenv('NVIDIA_NIM_API_KEY', ''))
+NVIDIA_NIM_VLM_BASE_URL = os.getenv('NVIDIA_NIM_VLM_BASE_URL', 'http://localhost:9000/v1')
+NVIDIA_NIM_VLM_BASE_URL_FALLBACK = os.getenv('NVIDIA_NIM_VLM_BASE_URL_FALLBACK', '')
+
+# Regular Nemotron LLM Server (for text processing and data structuring)
+# This is a different server from the VLM server
 NVIDIA_NIM_API_KEY = os.getenv('NVIDIA_NIM_API_KEY', '')
-# Default to user's Brev endpoint, but allow override via env var
-# Make sure this matches your Brev instance URL
-# Try localhost first if available, otherwise use the Cloudflare tunnel URL
 NVIDIA_NIM_BASE_URL = os.getenv('NVIDIA_NIM_BASE_URL', 'http://localhost:8000/v1')
-# Fallback to Cloudflare tunnel if localhost doesn't work
 NVIDIA_NIM_BASE_URL_FALLBACK = os.getenv('NVIDIA_NIM_BASE_URL_FALLBACK', 'https://8000-uzuj2kk3e.brevlab.com/v1')
 
 # Debug: Print the configuration being used
 print(f"NVIDIA NIM Configuration:")
-print(f"  Base URL: {NVIDIA_NIM_BASE_URL}")
-print(f"  API Key: {'SET' if NVIDIA_NIM_API_KEY else 'NOT SET'}")
+print(f"  VLM Server (Nemotron-Parse for PDF/Images): {NVIDIA_NIM_VLM_BASE_URL}")
+print(f"    VLM API Key: {'SET' if NVIDIA_NIM_VLM_API_KEY else 'NOT SET'}")
+print(f"  LLM Server (Nemotron for Text Processing): {NVIDIA_NIM_BASE_URL}")
+print(f"    LLM API Key: {'SET' if NVIDIA_NIM_API_KEY else 'NOT SET'}")
 
 # Development fallback - set your API key here if needed (NOT for production!)
 if not NVIDIA_NIM_API_KEY:
@@ -37,208 +45,183 @@ if not NVIDIA_NIM_API_KEY:
 
 def extract_text_from_pdf(pdf_path: str, filename: str) -> str:
     """
-    Use NVIDIA Nemotron to extract text from PDF via OCR.
-    Sends the PDF directly to Nemotron for processing.
+    Use NVIDIA Nemotron-Parse VLM to extract text from PDF via OCR.
+    Converts PDF pages to images and uses Nemotron-Parse tools for extraction.
     Returns extracted text.
     """
     try:
-        # Read PDF file and convert to base64
-        print(f"Reading PDF file: {filename}...")
-        with open(pdf_path, 'rb') as pdf_file:
-            pdf_data = pdf_file.read()
-            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
+        # Convert PDF to images first (Nemotron-Parse works with images, not PDFs directly)
+        try:
+            from pdf2image import convert_from_path
+            from io import BytesIO
+            import PIL.Image
+            import mimetypes
+        except ImportError:
+            raise ImportError("pdf2image and Pillow are required. Install: pip install pdf2image Pillow")
         
-        # Use Nemotron model via Brev/NIM
-        model_name = os.getenv('NVIDIA_NIM_MODEL', 'nvidia/nvidia-nemotron-nano-9b-v2')
+        print(f"Converting PDF to images: {filename}...")
+        images = convert_from_path(pdf_path, dpi=200)
         
-        # Create the prompt for OCR
-        prompt = f"""
-        Please perform OCR (Optical Character Recognition) on this PDF document named "{filename}".
+        if not images:
+            raise ValueError("No pages found in PDF")
         
-        Extract ALL visible text from the entire document, including:
-        - Headers and titles
-        - Body text and paragraphs
-        - Tables and structured data
-        - Any numbers, dates, addresses, names, IDs, account numbers, etc.
-        - Form fields and their values
-        - All pages in the document
+        print(f"Found {len(images)} pages, processing with Nemotron-Parse...")
         
-        Preserve the structure and formatting as much as possible.
-        Return ONLY the extracted text, nothing else.
-        """
+        # Use Nemotron-Parse VLM model
+        vlm_model_name = os.getenv('NVIDIA_NIM_VLM_MODEL', 'nvidia/nemotron-parse')
         
-        # Prepare the request payload with PDF
-        # Try sending PDF as base64 data URL
-        payload = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:application/pdf;base64,{pdf_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "top_p": 1,
-            "max_tokens": 8192,  # Increased for longer documents
-            "temperature": 0.1
-        }
-        
-        # Make API request to Brev/NIM
-        # Use a session to handle cookies for Cloudflare Access
-        session = requests.Session()
-        
-        headers = {
-            "accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        
-        # Brev requires authorization header - always include it
-        if NVIDIA_NIM_API_KEY:
-            headers["Authorization"] = f"Bearer {NVIDIA_NIM_API_KEY}"
-        else:
-            # Some Brev instances require the header even if empty
-            headers["Authorization"] = "Bearer "
-        
-        # Try localhost first, then fallback to Cloudflare tunnel
-        api_urls = [
-            f"{NVIDIA_NIM_BASE_URL}/chat/completions",
-            f"{NVIDIA_NIM_BASE_URL_FALLBACK}/chat/completions"
+        # Nemotron-Parse tools for different extraction modes
+        tools = [
+            "markdown_bbox",      # Extract with bounding boxes
+            "markdown_no_bbox",   # Extract without bounding boxes (cleaner text)
+            "detection_only",     # Detection only
         ]
         
-        response = None
-        last_error = None
+        # Use markdown_no_bbox for clean text extraction (tool index 1)
+        tool_id = 1  # markdown_no_bbox
+        tool_name = tools[tool_id]
         
-        for api_url in api_urls:
-            try:
-                print(f"Trying endpoint: {api_url}...")
-                response = session.post(api_url, headers=headers, json=payload, timeout=300)
-                
-                # Debug: Print response details
-                print(f"Response status code: {response.status_code}")
-                print(f"Response Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-                
-                # Check if we got a Cloudflare Access login page
-                if response.headers.get('Content-Type', '').startswith('text/html'):
-                    print(f"Got HTML response (likely Cloudflare Access login page), trying next endpoint...")
-                    last_error = "Cloudflare Access authentication required"
-                    continue
-                
-                # If we got a valid JSON response (or non-HTML), break
-                if response.status_code == 200 and not response.headers.get('Content-Type', '').startswith('text/html'):
-                    print(f"Successfully connected to {api_url}")
-                    break
-                elif response.status_code != 200:
-                    print(f"Got status {response.status_code}, trying next endpoint...")
-                    last_error = f"Status {response.status_code}: {response.text[:200]}"
-                    continue
-                    
-            except requests.exceptions.ConnectionError as e:
-                print(f"Connection error to {api_url}: {e}")
-                last_error = f"Connection error: {str(e)}"
-                continue
-            except Exception as e:
-                print(f"Error with {api_url}: {e}")
-                last_error = str(e)
-                continue
+        # Process each page
+        all_extracted_text = []
         
-        # If all endpoints failed or returned HTML
-        if response is None or response.headers.get('Content-Type', '').startswith('text/html'):
-            error_msg = f"""
-            ERROR: Could not connect to Nemotron endpoint.
+        for page_num, image in enumerate(images, 1):
+            print(f"Processing page {page_num}/{len(images)}...")
             
-            Tried endpoints:
-            1. {api_urls[0]}
-            2. {api_urls[1]}
+            # Convert image to base64
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode('ascii')
+            mime = "image/png"
             
-            The Cloudflare tunnel endpoint is protected by Cloudflare Access.
+            # Use Nemotron-Parse format: embed image as HTML-like tag
+            media_tag = f'<img src="data:{mime};base64,{img_base64}" />'
+            content = media_tag
             
-            Solutions:
-            1. Use localhost if your Brev instance is running locally:
-               Set NVIDIA_NIM_BASE_URL=http://localhost:8000/v1 in your .env file
-               
-            2. Get a Cloudflare Access service token:
-               - Go to your Brev console
-               - Navigate to Cloudflare Access settings
-               - Create a Service Token for API access
-               - Add it to .env as: NVIDIA_NIM_API_KEY=your-service-token
-               
-            3. Configure Cloudflare Access to allow API requests:
-               - Add a rule that allows requests with Authorization header
-               - Or disable Cloudflare Access for API endpoints
-               
-            Last error: {last_error}
-            """
-            print(error_msg)
-            raise ValueError("Could not connect to Nemotron endpoint. See error message above for solutions.")
-        
-        print(f"Response text (first 500 chars): {response.text[:500]}")
-        
-        if response.status_code != 200:
-            # Try alternative format - PDF as document attachment
-            print(f"First attempt failed ({response.status_code}), trying alternative format...")
+            # Prepare tool specification
+            tool_spec = [{"type": "function", "function": {"name": tool_name}}]
             
-            # Alternative: Try with PDF in a different format
-            payload_alt = {
-                "model": model_name,
+            # Prepare payload in Nemotron-Parse format
+            payload = {
+                "model": vlm_model_name,
                 "messages": [
                     {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
-                            {
-                                "type": "document",
-                                "document": {
-                                    "type": "pdf",
-                                    "data": pdf_base64
-                                }
-                            }
-                        ]
+                        "content": content
                     }
                 ],
-                "top_p": 1,
-                "max_tokens": 8192,
-                "temperature": 0.1
+                "tools": tool_spec,
+                "tool_choice": {"type": "function", "function": {"name": tool_name}},
+                "max_tokens": 8192,  # Increased for longer documents
             }
             
-            # Make sure headers are set for the alternative attempt too
-            if "Authorization" not in headers:
-                if NVIDIA_NIM_API_KEY:
-                    headers["Authorization"] = f"Bearer {NVIDIA_NIM_API_KEY}"
+            # Make API request to Nemotron-Parse VLM endpoint (separate server)
+            session = requests.Session()
+            
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+            
+            # Use VLM-specific API key if available, otherwise fall back to general key
+            vlm_api_key = NVIDIA_NIM_VLM_API_KEY if NVIDIA_NIM_VLM_API_KEY else NVIDIA_NIM_API_KEY
+            if vlm_api_key:
+                headers["Authorization"] = f"Bearer {vlm_api_key}"
+            else:
+                headers["Authorization"] = "Bearer "
+            
+            # Try VLM server endpoint for PDF processing
+            api_urls = [f"{NVIDIA_NIM_VLM_BASE_URL}/chat/completions"]
+            if NVIDIA_NIM_VLM_BASE_URL_FALLBACK:
+                api_urls.append(f"{NVIDIA_NIM_VLM_BASE_URL_FALLBACK}/chat/completions")
+            
+            page_response = None
+            page_error = None
+            
+            for api_url in api_urls:
+                try:
+                    print(f"  Sending to: {api_url}...")
+                    page_response = session.post(api_url, headers=headers, json=payload, timeout=300)
+                    
+                    # Check if we got a Cloudflare Access login page
+                    if page_response.headers.get('Content-Type', '').startswith('text/html'):
+                        print(f"  Got HTML response (Cloudflare Access), trying next endpoint...")
+                        page_error = "Cloudflare Access authentication required"
+                        continue
+                    
+                    # If we got a valid response, break
+                    if page_response.status_code == 200 and not page_response.headers.get('Content-Type', '').startswith('text/html'):
+                        break
+                    elif page_response.status_code != 200:
+                        print(f"  Got status {page_response.status_code}, trying next endpoint...")
+                        page_error = f"Status {page_response.status_code}: {page_response.text[:200]}"
+                        continue
+                        
+                except requests.exceptions.ConnectionError as e:
+                    print(f"  Connection error: {e}")
+                    page_error = f"Connection error: {str(e)}"
+                    continue
+                except Exception as e:
+                    print(f"  Error: {e}")
+                    page_error = str(e)
+                    continue
+            
+            # Process the response
+            if page_response is None or page_response.headers.get('Content-Type', '').startswith('text/html'):
+                raise ValueError(f"Could not connect to Nemotron-Parse endpoint. Error: {page_error}")
+            
+            if page_response.status_code != 200:
+                raise ValueError(f"NVIDIA NIM API error: {page_response.status_code} - {page_response.text[:1000]}")
+            
+            # Parse response
+            try:
+                page_result = page_response.json()
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON response. Status: {page_response.status_code}, Response: {page_response.text[:1000]}")
+            
+            # Extract text from Nemotron-Parse response
+            # Nemotron-Parse returns tool calls with the extracted text
+            if "choices" in page_result and len(page_result["choices"]) > 0:
+                choice = page_result["choices"][0]
+                
+                # Check if there's a tool call with the result
+                if "message" in choice:
+                    message = choice["message"]
+                    
+                    # Nemotron-Parse returns results in tool_calls
+                    if "tool_calls" in message and len(message["tool_calls"]) > 0:
+                        # Extract from tool call arguments
+                        tool_call = message["tool_calls"][0]
+                        if "function" in tool_call and "arguments" in tool_call["function"]:
+                            try:
+                                args = json.loads(tool_call["function"]["arguments"])
+                                if "markdown" in args:
+                                    page_text = args["markdown"]
+                                elif "text" in args:
+                                    page_text = args["text"]
+                                else:
+                                    page_text = str(args)
+                            except:
+                                page_text = str(tool_call["function"].get("arguments", ""))
+                        else:
+                            page_text = str(tool_call)
+                    # Or check if content is directly in message
+                    elif "content" in message:
+                        page_text = message["content"]
+                    else:
+                        page_text = str(message)
                 else:
-                    headers["Authorization"] = "Bearer "
-            
-            response = requests.post(api_url, headers=headers, json=payload_alt, timeout=300)
-            print(f"Alternative attempt - Status: {response.status_code}, Response: {response.text[:500]}")
-            
-            if response.status_code != 200:
-                raise ValueError(f"NVIDIA NIM API error: {response.status_code} - {response.text[:1000]}")
+                    page_text = str(choice)
+                
+                all_extracted_text.append(f"--- Page {page_num} ---\n{page_text}\n")
+            else:
+                print(f"Warning: Unexpected response format for page {page_num}")
         
-        # Check if response is valid JSON
-        try:
-            result = response.json()
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON response from API. Status: {response.status_code}, Response: {response.text[:1000]}")
+        if not all_extracted_text:
+            raise ValueError("Failed to extract text from any pages")
         
-        # Extract the text from the response
-        if "choices" in result and len(result["choices"]) > 0:
-            extracted_text = result["choices"][0]["message"]["content"]
-        else:
-            raise ValueError(f"Unexpected response format: {result}")
-        
-        print(f"Successfully extracted text from PDF using Nemotron OCR")
+        # Combine all pages
+        extracted_text = "\n".join(all_extracted_text)
+        print(f"Successfully extracted text from {len(images)} pages using Nemotron-Parse")
         return extracted_text
     
     except requests.exceptions.RequestException as e:

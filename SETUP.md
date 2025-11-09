@@ -3,7 +3,16 @@
 ## Prerequisites
 
 1. Python 3.8 or higher
-2. NVIDIA NIM API key and access to Nemotron models
+2. Two separate NVIDIA NIM servers:
+   - **Nemotron-Parse VLM Server** (for PDF/image OCR processing)
+   - **Nemotron LLM Server** (for text processing and data structuring)
+3. API keys for both servers (can be the same or different)
+4. Poppler installed (for PDF to image conversion):
+   ```bash
+   brew install poppler  # macOS
+   # or
+   sudo apt-get install poppler-utils  # Linux
+   ```
 
 ## Installation
 
@@ -13,29 +22,43 @@ pip install -r requirements.txt
 ```
 
 2. Set up your NVIDIA NIM API credentials:
-   - Get your API key from [NVIDIA NIM](https://build.nvidia.com/) or your NVIDIA NIM deployment
-   - Set it as an environment variable:
+   - Get your API keys from your NVIDIA NIM deployments
+   - Configure **TWO SEPARATE SERVERS**:
    
    **On macOS/Linux:**
    ```bash
-   export NVIDIA_NIM_API_KEY="your-api-key-here"
-   export NVIDIA_NIM_BASE_URL="https://integrate.api.nvidia.com/v1"  # Optional, defaults to this
-   export NVIDIA_NIM_MODEL="meta/nemotron-4-340b-instruct"  # Optional, defaults to this
+   # Nemotron-Parse VLM Server (for PDF/image OCR)
+   export NVIDIA_NIM_VLM_API_KEY="your-vlm-api-key-here"
+   export NVIDIA_NIM_VLM_BASE_URL="http://your-vlm-server:9000/v1"
+   
+   # Nemotron LLM Server (for text processing)
+   export NVIDIA_NIM_API_KEY="your-llm-api-key-here"
+   export NVIDIA_NIM_BASE_URL="http://your-llm-server:8000/v1"
+   export NVIDIA_NIM_MODEL="nvidia/nvidia-nemotron-nano-9b-v2"
    ```
    
    **On Windows:**
    ```cmd
-   set NVIDIA_NIM_API_KEY=your-api-key-here
-   set NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
-   set NVIDIA_NIM_MODEL=meta/nemotron-4-340b-instruct
+   set NVIDIA_NIM_VLM_API_KEY=your-vlm-api-key-here
+   set NVIDIA_NIM_VLM_BASE_URL=http://your-vlm-server:9000/v1
+   set NVIDIA_NIM_API_KEY=your-llm-api-key-here
+   set NVIDIA_NIM_BASE_URL=http://your-llm-server:8000/v1
+   set NVIDIA_NIM_MODEL=nvidia/nvidia-nemotron-nano-9b-v2
    ```
    
    **Or create a `.env` file** (recommended):
    ```
-   NVIDIA_NIM_API_KEY=your-api-key-here
-   NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
-   NVIDIA_NIM_MODEL=meta/nemotron-4-340b-instruct
+   # Nemotron-Parse VLM Server (separate server for PDF/image OCR)
+   NVIDIA_NIM_VLM_API_KEY=your-vlm-api-key-here
+   NVIDIA_NIM_VLM_BASE_URL=http://your-vlm-server:9000/v1
+   
+   # Nemotron LLM Server (separate server for text processing)
+   NVIDIA_NIM_API_KEY=your-llm-api-key-here
+   NVIDIA_NIM_BASE_URL=http://your-llm-server:8000/v1
+   NVIDIA_NIM_MODEL=nvidia/nvidia-nemotron-nano-9b-v2
    ```
+   
+   **Note:** If `NVIDIA_NIM_VLM_API_KEY` is not set, it will fall back to `NVIDIA_NIM_API_KEY`.
    
    Then install python-dotenv and load it in main.py:
    ```bash
@@ -70,9 +93,13 @@ http://localhost:5000/dashboard
 
 ## Notes
 
+- **Two Separate Servers**: The system uses two different NVIDIA NIM servers:
+  - **VLM Server** (Nemotron-Parse): Handles PDF/image OCR processing
+  - **LLM Server** (Nemotron 9b): Handles text processing and data structuring
 - PDF files are temporarily stored during processing
-- The system uses NVIDIA Nemotron models via NIM for OCR and data structuring
+- PDFs are converted to images using poppler before being sent to Nemotron-Parse
 - Make sure your dataset file (`topo/global_dataset.xlsx`) exists for proper column mapping
-- The default model is `meta/nemotron-4-340b-instruct` but can be changed via `NVIDIA_NIM_MODEL` environment variable
-- If you're using a custom NIM deployment, update `NVIDIA_NIM_BASE_URL` to point to your deployment endpoint
+- The default LLM model is `nvidia/nvidia-nemotron-nano-9b-v2` but can be changed via `NVIDIA_NIM_MODEL` environment variable
+- The VLM model is `nvidia/nemotron-parse` (configured automatically)
+- If you're using custom NIM deployments, update the respective `BASE_URL` environment variables
 
