@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Home</title>
+    <title>Goldman Sachs - Vendor Onboarding Portal</title>
     <style>
         * {
             margin: 0;
@@ -12,62 +12,214 @@
         }
 
         body {
-            font-family: Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            /* Dark gradient background like GS Developer site */
+            background: linear-gradient(135deg, #0a1929 0%, #001e3c 50%, #0a1929 100%);
+            background-attachment: fixed;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             padding: 20px;
+            color: white;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Adding subtle animated gradient overlay for depth */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 20% 50%, rgba(0, 123, 255, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(0, 102, 204, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+            animation: subtleShift 15s ease-in-out infinite;
+        }
+
+        @keyframes subtleShift {
+            0%, 100% { opacity: 0.5; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.1); }
         }
 
         .home-container {
-            background: white;
-            padding: 60px 40px;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            /* Glass morphism effect with darker background */
+            background: rgba(15, 30, 50, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 80px 60px;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
             width: 100%;
-            max-width: 500px;
+            max-width: 1000px;
             text-align: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            /* Premium badge styling with GS blue */
+            background: rgba(0, 123, 255, 0.15);
+            border: 1px solid rgba(0, 123, 255, 0.3);
+            color: #4fc3f7;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-icon {
+            font-size: 16px;
         }
 
         h1 {
+            font-size: 3.8em;
+            line-height: 1.15;
             margin-bottom: 30px;
-            color: #333;
-            font-size: 2.5em;
+            color: #ffffff;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .gradient-text {
+            /* Refined gradient for premium feel */
+            background: linear-gradient(135deg, #4fc3f7 0%, #007bff 50%, #0056d6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            position: relative;
         }
 
         p {
             margin-bottom: 40px;
-            color: #666;
-            font-size: 1.1em;
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 1.2em;
+            line-height: 1.7;
+            max-width: 750px;
+            margin-left: auto;
+            margin-right: auto;
+            font-weight: 400;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
         }
 
         .login-button {
-            display: inline-block;
-            padding: 15px 40px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 18px 38px;
+            /* Vibrant gradient button */
+            background: linear-gradient(135deg, #007bff 0%, #0056d6 100%);
             color: white;
             text-decoration: none;
-            border-radius: 5px;
-            font-size: 18px;
-            font-weight: bold;
-            transition: opacity 0.3s ease;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(0, 123, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .login-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .login-button:hover::before {
+            left: 100%;
         }
 
         .login-button:hover {
-            opacity: 0.9;
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(0, 123, 255, 0.5);
+        }
+
+        .secondary-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 18px 38px;
+            /* Ghost button with refined border */
+            background: transparent;
+            color: #4fc3f7;
+            text-decoration: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid rgba(79, 195, 247, 0.3);
+        }
+
+        .secondary-button:hover {
+            border-color: #4fc3f7;
+            background: rgba(79, 195, 247, 0.1);
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        @media (max-width: 768px) {
+            .home-container {
+                padding: 60px 30px;
+            }
+
+            h1 {
+                font-size: 2.5em;
+            }
+
+            p {
+                font-size: 1.05em;
+            }
+
+            .button-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
         }
     </style>
 </head>
 <body>
     <div class="home-container">
-        <h1>Welcome</h1>
-        <p>Please log in to continue</p>
-        <a href="login" class="login-button">Login</a>
+        <div class="badge">
+            <span class="badge-icon">⚡</span>
+            GOLDMAN SACHS DEVELOPER
+        </div>
+        <h1>
+            <span class="gradient-text">Vendor & Client</span><br>Onboarding Portal
+        </h1>
+        <p>
+            Streamline your onboarding experience with Goldman Sachs. Access secure document management, compliance tracking, and real-time status updates in one unified platform
+        </p>
+        <div class="button-group">
+            <!-- Auth0 logic remains completely intact -->
+            <a href="/login" class="login-button">
+                Get Started
+                <span>→</span>
+            </a>
+            <a href="#" class="secondary-button">
+                Learn More
+            </a>
+        </div>
     </div>
 </body>
 </html>
-
