@@ -1,6 +1,4 @@
 from flask import Flask, render_template, jsonify, request
-from google.cloud import storage, firestore
-from google.oauth2 import service_account
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
@@ -9,22 +7,14 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# Load credentials from the service account key file
-CREDENTIALS_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', 'service-account-key.json')
-
-if os.path.exists(CREDENTIALS_PATH):
-    credentials = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH)
-    storage_client = storage.Client(credentials=credentials)
-    firestore_client = firestore.Client(credentials=credentials)
-    print(f"✓ Successfully loaded credentials from: {CREDENTIALS_PATH}")
-else:
-    print(f"❌ ERROR: Credentials file not found at: {CREDENTIALS_PATH}")
-    print("Please follow the setup instructions in SETUP_GUIDE.md")
-    storage_client = None
-    firestore_client = None
-
-BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME', 'vendor-onboarding-files-sn')
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'xlsx'}
+
+# Base upload directory
+UPLOAD_BASE_DIR = 'static/uploads'
+
+# In-memory storage for document metadata
+# Structure: {user_email: [list of documents]}
+documents_storage = {}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -53,9 +43,6 @@ def callback():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    if not storage_client or not firestore_client:
-        return jsonify({'error': 'Google Cloud credentials not configured. Check console.'}), 500
-    
     try:
         # Get user email from Auth0 (passed from frontend)
         user_email = request.form.get('user_email')
@@ -76,33 +63,55 @@ def upload_file():
         # Secure the filename
         filename = secure_filename(file.filename)
         
-        # Create unique filename with timestamp
+        # Create unique document ID
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        unique_filename = f"{user_email}/{timestamp}_{filename}"
-
-        # Upload to Google Cloud Storage
-        bucket = storage_client.bucket(BUCKET_NAME)
-        blob = bucket.blob(unique_filename)
-        blob.upload_from_file(file)
-
-        # Get public URL (or signed URL for private buckets)
-        file_url = f"gs://{BUCKET_NAME}/{unique_filename}"
-
-        # Save metadata to Firestore
-        doc_ref = firestore_client.collection('documents').document()
-        doc_ref.set({
+        document_id = f"{user_email}_{timestamp}_{filename}".replace(' ', '_').replace('/', '_')
+        
+        # Ensure base upload directory exists
+        if not os.path.exists(UPLOAD_BASE_DIR):
+            os.makedirs(UPLOAD_BASE_DIR)
+            print(f"Created base upload directory: {UPLOAD_BASE_DIR}")
+        
+        # Create user-specific directory (sanitize email for filesystem)
+        safe_user_email = secure_filename(user_email.replace('@', '_at_').replace('.', '_'))
+        user_upload_dir = os.path.join(UPLOAD_BASE_DIR, safe_user_email)
+        
+        # Create user directory if it doesn't exist
+        if not os.path.exists(user_upload_dir):
+            os.makedirs(user_upload_dir)
+            print(f"Created user upload directory: {user_upload_dir}")
+        
+        # Create unique filename with timestamp to avoid overwrites
+        unique_filename = f"{timestamp}_{filename}"
+        file_path = os.path.join(user_upload_dir, unique_filename)
+        
+        # Save the file to local directory
+        file.save(file_path)
+        print(f"File saved to: {file_path}")
+        
+        # Store document metadata in memory
+        upload_date = datetime.now()
+        document_data = {
+            'id': document_id,
             'user_email': user_email,
             'filename': filename,
-            'storage_path': unique_filename,
-            'file_url': file_url,
-            'upload_date': firestore.SERVER_TIMESTAMP,
-            'file_type': filename.rsplit('.', 1)[1].lower()
-        })
+            'upload_date': upload_date.isoformat(),
+            'file_type': filename.rsplit('.', 1)[1].lower() if '.' in filename else '',
+            'file_path': file_path,
+            'unique_filename': unique_filename
+        }
+        
+        # Initialize user's document list if it doesn't exist
+        if user_email not in documents_storage:
+            documents_storage[user_email] = []
+        
+        # Add document to user's list
+        documents_storage[user_email].append(document_data)
 
         return jsonify({
             'message': 'File uploaded successfully',
             'filename': filename,
-            'document_id': doc_ref.id
+            'document_id': document_id
         }), 200
 
     except Exception as e:
@@ -111,26 +120,30 @@ def upload_file():
 
 @app.route('/api/documents/<user_email>', methods=['GET'])
 def get_user_documents(user_email):
-    if not firestore_client:
-        return jsonify({'error': 'Google Cloud credentials not configured. Check console.'}), 500
-    
     try:
-        # Query Firestore for user's documents
-        docs_ref = firestore_client.collection('documents')
-        query = docs_ref.where('user_email', '==', user_email)
+        # Get documents for this user from in-memory storage
+        documents = documents_storage.get(user_email, [])
         
-        documents = []
-        for doc in query.stream():
-            doc_data = doc.to_dict()
-            doc_data['id'] = doc.id
-            # Add upload_date as timestamp if it exists
-            if 'upload_date' in doc_data and doc_data['upload_date']:
-                doc_data['upload_date'] = doc_data['upload_date'].isoformat() if hasattr(doc_data['upload_date'], 'isoformat') else str(doc_data['upload_date'])
-            documents.append(doc_data)
-
+        # Sort by upload date (most recent first)
         documents.sort(key=lambda x: x.get('upload_date', ''), reverse=True)
+        
+        # Format documents for frontend (convert ISO date to Firestore-like format)
+        formatted_documents = []
+        for doc in documents:
+            formatted_doc = doc.copy()
+            # Convert ISO date string to timestamp format expected by frontend
+            if 'upload_date' in formatted_doc:
+                try:
+                    date_obj = datetime.fromisoformat(formatted_doc['upload_date'])
+                    # Frontend expects Firestore timestamp format with _seconds
+                    formatted_doc['upload_date'] = {
+                        '_seconds': int(date_obj.timestamp())
+                    }
+                except:
+                    formatted_doc['upload_date'] = None
+            formatted_documents.append(formatted_doc)
 
-        return jsonify({'documents': documents}), 200
+        return jsonify({'documents': formatted_documents}), 200
 
     except Exception as e:
         print(f"Error fetching documents: {str(e)}")
