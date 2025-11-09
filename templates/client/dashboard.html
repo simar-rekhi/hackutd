@@ -231,21 +231,18 @@
             uploadOverlay.classList.toggle('active');
         }
 
-        // Close overlay when clicking outside
         uploadOverlay.addEventListener('click', (e) => {
             if (e.target === uploadOverlay) {
                 toggleUploadArea();
             }
         });
 
-        // Click to browse
         uploadArea.addEventListener('click', (e) => {
             if (e.target !== uploadArea.querySelector('.close-button')) {
                 fileInput.click();
             }
         });
 
-        // Drag and drop events
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -265,7 +262,6 @@
             handleFiles(e.dataTransfer.files);
         });
 
-        // File input change
         fileInput.addEventListener('change', (e) => {
             handleFiles(e.target.files);
         });
@@ -278,11 +274,9 @@
                 return;
             }
 
-            // Files uploaded - you can add functionality here
             alert(`Successfully uploaded ${pdfFiles.length} PDF file(s).`);
             toggleUploadArea();
         }
     </script>
 </body>
 </html>
-
