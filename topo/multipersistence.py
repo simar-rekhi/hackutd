@@ -41,7 +41,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import roc_auc_score
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Any
+import pickle
+import os
 
 # ----------------------------
 # Utilities
@@ -243,6 +245,295 @@ def ego_features_for_applicant(
     return vectorize_surfaces(b0, b1)
 
 # ----------------------------
+# Model persistence & inference
+# ----------------------------
+
+def save_model_artifacts(
+    model: CalibratedClassifierCV,
+    G: nx.Graph,
+    inv: Dict[str, Dict],
+    f1_node: Dict,
+    f2_node: Dict,
+    edge_fields: List[str],
+    f2_col: str,
+    alphas: np.ndarray,
+    betas: np.ndarray,
+    theta_I: float,
+    theta_F: float,
+    app_id: str,
+    save_path: str
+):
+    """
+    Save all artifacts needed for inference on new clients.
+    Note: f1_edge_fn and f2_edge_fn are not saved as they can be reconstructed from G and f2_node.
+    """
+    artifacts = {
+        "model": model,
+        "graph": G,
+        "inv_index": inv,
+        "f1_node": f1_node,
+        "f2_node": f2_node,
+        "edge_fields": edge_fields,
+        "f2_col": f2_col,
+        "alphas": alphas,
+        "betas": betas,
+        "theta_I": theta_I,
+        "theta_F": theta_F,
+        "app_id": app_id,
+        "f2_scaler_params": None  # Will store scaling params for f2
+    }
+    
+    # Extract f2 scaling parameters if available
+    if hasattr(f2_node, 'get') and len(f2_node) > 0:
+        f2_values = list(f2_node.values())
+        if len(f2_values) > 0:
+            arr = np.array(f2_values)
+            p5, p95 = np.nanpercentile(arr, 5), np.nanpercentile(arr, 95)
+            artifacts["f2_scaler_params"] = {"p5": float(p5), "p95": float(p95)}
+    
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
+    with open(save_path, "wb") as f:
+        pickle.dump(artifacts, f)
+    print(f"Model artifacts saved to {save_path}")
+
+def load_model_artifacts(load_path: str) -> Dict[str, Any]:
+    """
+    Load saved model artifacts for inference.
+    """
+    with open(load_path, "rb") as f:
+        artifacts = pickle.load(f)
+    return artifacts
+
+def add_client_to_graph(
+    G: nx.Graph,
+    inv: Dict[str, Dict],
+    client_id: str,
+    client_data: Dict[str, Any],
+    edge_fields: List[str]
+) -> Tuple[nx.Graph, Dict[str, Dict]]:
+    """
+    Add a new client to the existing graph and update inverted index.
+    Returns updated (G, inv).
+    """
+    G_new = G.copy()
+    inv_new = {f: {k: v.copy() for k, v in inv[f].items()} for f in inv}
+    
+    # Add node
+    G_new.add_node(client_id)
+    
+    # Update inverted index and add edges
+    for f in edge_fields:
+        val = client_data.get(f, None)
+        if val is None or (isinstance(val, str) and val.strip() == ""):
+            continue
+        if pd.isna(val):
+            continue
+            
+        key = val.strip().lower() if isinstance(val, str) else val
+        
+        # Add to inverted index
+        if key not in inv_new[f]:
+            inv_new[f][key] = []
+        inv_new[f][key].append(client_id)
+        
+        # Add edges to existing nodes sharing this value
+        existing_ids = inv.get(f, {}).get(key, [])
+        for existing_id in existing_ids:
+            if existing_id != client_id:
+                rarity = 1.0 / len(inv_new[f][key])
+                if G_new.has_edge(client_id, existing_id):
+                    G_new[client_id][existing_id]["weight"] = max(
+                        G_new[client_id][existing_id]["weight"], rarity
+                    )
+                    G_new[client_id][existing_id].setdefault("fields", set()).add(f)
+                else:
+                    G_new.add_edge(client_id, existing_id, weight=rarity, fields={f})
+    
+    return G_new, inv_new
+
+def compute_f1_for_new_client(
+    client_id: str,
+    client_data: Dict[str, Any],
+    edge_fields: List[str],
+    inv: Dict[str, Dict],
+    max_reuse: float = 1.0
+) -> float:
+    """
+    Compute f1 (reuse risk) for a new client.
+    """
+    counts = []
+    for f in edge_fields:
+        val = client_data.get(f, None)
+        if val is None or pd.isna(val):
+            counts.append(0)
+            continue
+        key = val.strip().lower() if isinstance(val, str) else val
+        count = len(inv.get(f, {}).get(key, []))
+        counts.append(count)
+    
+    max_count = max(counts) if counts else 0
+    return (max_count / max(1.0, max_reuse)) if max_reuse > 0 else 0.0
+
+def scale_f2_for_new_client(
+    client_data: Dict[str, Any],
+    f2_col: str,
+    scaler_params: Optional[Dict[str, float]] = None
+) -> float:
+    """
+    Scale f2 value for a new client using saved scaling parameters.
+    """
+    val = client_data.get(f2_col, 0.0)
+    arr = pd.to_numeric([val], errors="coerce")[0]
+    
+    if not np.isfinite(arr):
+        arr = 0.0
+    
+    if scaler_params:
+        p5 = scaler_params.get("p5", 0.0)
+        p95 = scaler_params.get("p95", 1.0)
+        rng = (p95 - p5) if p95 > p5 else 1.0
+        scaled = np.clip((arr - p5) / rng, 0, 1)
+    else:
+        scaled = float(np.clip(arr, 0, 1))
+    
+    return scaled
+
+class ClientValidator:
+    """
+    Class to validate/flag new clients using trained model and graph.
+    """
+    
+    def __init__(self, artifacts_path: str):
+        """
+        Load model artifacts from file.
+        """
+        self.artifacts = load_model_artifacts(artifacts_path)
+        self.model = self.artifacts["model"]
+        self.G = self.artifacts["graph"]
+        self.inv = self.artifacts["inv_index"]
+        self.f1_node = self.artifacts["f1_node"]
+        self.f2_node = self.artifacts["f2_node"]
+        # Reconstruct edge functions from graph and f2_node
+        def f1_edge_recon(u, v):
+            if self.G.has_edge(u, v):
+                return self.G[u][v].get("weight", 0.0)
+            return 0.0
+        def f2_edge_recon(u, v):
+            f2_u = self.f2_node.get(u, 0.0)
+            f2_v = self.f2_node.get(v, 0.0)
+            return 0.5 * (f2_u + f2_v)
+        self.f1_edge_fn = f1_edge_recon
+        self.f2_edge_fn = f2_edge_recon
+        self.edge_fields = self.artifacts["edge_fields"]
+        self.f2_col = self.artifacts["f2_col"]
+        self.alphas = self.artifacts["alphas"]
+        self.betas = self.artifacts["betas"]
+        self.theta_I = self.artifacts["theta_I"]
+        self.theta_F = self.artifacts["theta_F"]
+        self.app_id = self.artifacts.get("app_id", "applicant_id")
+        self.f2_scaler_params = self.artifacts.get("f2_scaler_params")
+        
+        # Compute max_reuse for f1 normalization
+        if self.f1_node:
+            self.max_reuse = max(self.f1_node.values()) if self.f1_node.values() else 1.0
+        else:
+            self.max_reuse = 1.0
+    
+    def validate_client(
+        self,
+        client_id: str,
+        client_data: Dict[str, Any],
+        return_details: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Validate a new client using limited parameters.
+        
+        Args:
+            client_id: Unique identifier for the client
+            client_data: Dictionary with client parameters (email, phone, address, etc.)
+            return_details: If True, return detailed risk information
+        
+        Returns:
+            Dictionary with:
+                - status: "Validated" or "Flagged"
+                - risk_score: Probability of fraud (0-1)
+                - triage: "Clear", "Iffy", or "Fraud"
+                - connections: Number of connections in graph (if return_details)
+        """
+        # Add client to graph temporarily
+        G_temp, inv_temp = add_client_to_graph(
+            self.G, self.inv, client_id, client_data, self.edge_fields
+        )
+        
+        # Compute f1 and f2 for new client
+        f1_new = compute_f1_for_new_client(
+            client_id, client_data, self.edge_fields, inv_temp, self.max_reuse
+        )
+        f2_new = scale_f2_for_new_client(
+            client_data, self.f2_col, self.f2_scaler_params
+        )
+        
+        # Update f1_node and f2_node temporarily
+        f1_node_temp = self.f1_node.copy()
+        f1_node_temp[client_id] = f1_new
+        f2_node_temp = self.f2_node.copy()
+        f2_node_temp[client_id] = f2_new
+        
+        # Create edge functions that handle new client
+        def f1_edge_temp(u, v):
+            if u == client_id or v == client_id:
+                # For edges involving new client, compute weight on the fly
+                if G_temp.has_edge(u, v):
+                    return G_temp[u][v].get("weight", 0.0)
+                return 0.0
+            return self.f1_edge_fn(u, v)
+        
+        def f2_edge_temp(u, v):
+            f2_u = f2_node_temp.get(u, 0.0)
+            f2_v = f2_node_temp.get(v, 0.0)
+            return 0.5 * (f2_u + f2_v)
+        
+        # Extract topological features
+        try:
+            features = ego_features_for_applicant(
+                G_temp, client_id, self.alphas, self.betas,
+                f1_node_temp, f2_node_temp, f1_edge_temp, f2_edge_temp
+            )
+        except Exception as e:
+            # If feature extraction fails, use zero features
+            print(f"Warning: Feature extraction failed for {client_id}: {e}")
+            features = np.zeros(self.alphas.shape[0] * self.betas.shape[0] * 2 + 8)
+        
+        # Predict
+        features_2d = features.reshape(1, -1)
+        proba = self.model.predict_proba(features_2d)[0, 1]
+        
+        # Triage
+        if proba >= self.theta_F:
+            triage = "Fraud"
+            status = "Flagged"
+        elif proba >= self.theta_I:
+            triage = "Iffy"
+            status = "Flagged"
+        else:
+            triage = "Clear"
+            status = "Validated"
+        
+        result = {
+            "status": status,
+            "risk_score": float(proba),
+            "triage": triage
+        }
+        
+        if return_details:
+            connections = G_temp.degree(client_id)
+            result["connections"] = int(connections)
+            result["f1_reuse_risk"] = float(f1_new)
+            result["f2_proxy"] = float(f2_new)
+        
+        return result
+
+# ----------------------------
 # Model training & threshold selection
 # ----------------------------
 
@@ -292,6 +583,8 @@ def main():
     ap.add_argument("--fn_cost", type=float, default=5.0)
     ap.add_argument("--fp_cost", type=float, default=1.0)
     ap.add_argument("--review_cost", type=float, default=0.5)
+    ap.add_argument("--save_model", type=str, default=None,
+                    help="Path to save model artifacts for inference (optional)")
     args = ap.parse_args()
 
     # Load data
@@ -394,6 +687,20 @@ def main():
     out["label_true"] = df[label_col]
     out.to_csv(args.out, index=False)
 
+    # Save model artifacts for inference if requested
+    if args.save_model:
+        save_model_artifacts(
+            cal, G, inv, f1_node, f2_node, edge_fields, f2_col,
+            alphas, betas, theta_I, theta_F, app_id, args.save_model
+        )
+    else:
+        # Default: save to same directory as script
+        default_model_path = os.path.join(script_dir, "model_artifacts.pkl")
+        save_model_artifacts(
+            cal, G, inv, f1_node, f2_node, edge_fields, f2_col,
+            alphas, betas, theta_I, theta_F, app_id, default_model_path
+        )
+
     # Print summary
     summary = {
         "records": int(len(df)),
@@ -410,5 +717,58 @@ def main():
     }
     print(pd.Series(summary).to_string())
 
+# ----------------------------
+# Example usage for inference
+# ----------------------------
+
+def example_validate_client():
+    """
+    Example of how to use ClientValidator to validate a new client.
+    """
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "model_artifacts.pkl")
+    
+    if not os.path.exists(model_path):
+        print(f"Error: Model artifacts not found at {model_path}")
+        print("Please run main() first to train and save the model.")
+        return
+    
+    # Initialize validator
+    validator = ClientValidator(model_path)
+    
+    # Example client data (limited parameters)
+    new_client = {
+        "email": "test@example.com",
+        "phone": "555-1234",
+        "address": "123 Main St",
+        # Add f2 column if available (e.g., credit_score)
+        # "credit_score": 650
+    }
+    
+    # Validate client
+    result = validator.validate_client(
+        client_id="new_client_001",
+        client_data=new_client,
+        return_details=True
+    )
+    
+    print("\n=== Client Validation Result ===")
+    print(f"Status: {result['status']}")
+    print(f"Risk Score: {result['risk_score']:.4f}")
+    print(f"Triage: {result['triage']}")
+    if 'connections' in result:
+        print(f"Graph Connections: {result['connections']}")
+        print(f"F1 Reuse Risk: {result['f1_reuse_risk']:.4f}")
+        print(f"F2 Proxy: {result['f2_proxy']:.4f}")
+    
+    return result
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "validate":
+        # Run validation example
+        example_validate_client()
+    else:
+        # Run training
+        main()
