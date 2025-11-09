@@ -277,10 +277,15 @@ def optimize_thresholds(oof: np.ndarray, y: np.ndarray,
 # ----------------------------
 
 def main():
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_data = os.path.join(script_dir, "global_dataset.xlsx")
+    default_out = os.path.join(script_dir, "onboarding_topo_pipeline_predictions_labeled.csv")
+    
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=str, default="/mnt/data/unified_onboarding_50_records_labeled.xlsx",
+    ap.add_argument("--data", type=str, default=default_data,
                     help="Path to labeled onboarding data (xlsx/csv)")
-    ap.add_argument("--out", type=str, default="/mnt/data/onboarding_topo_pipeline_predictions_labeled.csv",
+    ap.add_argument("--out", type=str, default=default_out,
                     help="Path to save predictions CSV")
     ap.add_argument("--grid", type=int, default=6, help="Grid size K for (alpha,beta)")
     ap.add_argument("--review_cap", type=float, default=0.25, help="Max review bucket share")
