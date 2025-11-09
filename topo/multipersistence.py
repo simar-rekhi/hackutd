@@ -723,7 +723,8 @@ def main():
 
 def example_validate_client():
     """
-    Example of how to use ClientValidator to validate a new client.
+    Example of how to use ClientValidator to validate new clients.
+    Shows multiple examples with different risk profiles.
     """
     import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -732,37 +733,92 @@ def example_validate_client():
     if not os.path.exists(model_path):
         print(f"Error: Model artifacts not found at {model_path}")
         print("Please run main() first to train and save the model.")
+        print("\nTo train: python multipersistence.py")
         return
     
     # Initialize validator
+    print("Loading model artifacts...")
     validator = ClientValidator(model_path)
+    print("Model loaded successfully!\n")
     
-    # Example client data (limited parameters)
-    new_client = {
-        "email": "test@example.com",
-        "phone": "555-1234",
-        "address": "123 Main St",
-        # Add f2 column if available (e.g., credit_score)
-        # "credit_score": 650
+    # Example 1: Low-risk client
+    print("=" * 60)
+    print("Example 1: Low-Risk Client")
+    print("=" * 60)
+    client1 = {
+        "email": "john.doe@example.com",
+        "phone": "555-0100",
+        "address": "123 Main Street, New York, NY 10001",
+        "tax_id": "12-3456789",
     }
     
-    # Validate client
-    result = validator.validate_client(
-        client_id="new_client_001",
-        client_data=new_client,
+    result1 = validator.validate_client(
+        client_id="client_001",
+        client_data=client1,
         return_details=True
     )
     
-    print("\n=== Client Validation Result ===")
-    print(f"Status: {result['status']}")
-    print(f"Risk Score: {result['risk_score']:.4f}")
-    print(f"Triage: {result['triage']}")
-    if 'connections' in result:
-        print(f"Graph Connections: {result['connections']}")
-        print(f"F1 Reuse Risk: {result['f1_reuse_risk']:.4f}")
-        print(f"F2 Proxy: {result['f2_proxy']:.4f}")
+    print(f"Status: {result1['status']}")
+    print(f"Risk Score: {result1['risk_score']:.4f}")
+    print(f"Triage: {result1['triage']}")
+    if 'connections' in result1:
+        print(f"Graph Connections: {result1['connections']}")
+        print(f"F1 Reuse Risk: {result1['f1_reuse_risk']:.4f}")
+    print()
     
-    return result
+    # Example 2: Client with shared identifiers (higher risk)
+    print("=" * 60)
+    print("Example 2: Client with Shared Identifiers")
+    print("=" * 60)
+    client2 = {
+        "email": "suspicious@example.com",
+        "phone": "555-9999",
+        "address": "456 Oak Avenue, Los Angeles, CA 90001",
+        "bank_swift_code": "CHASUS33",
+    }
+    
+    result2 = validator.validate_client(
+        client_id="client_002",
+        client_data=client2,
+        return_details=True
+    )
+    
+    print(f"Status: {result2['status']}")
+    print(f"Risk Score: {result2['risk_score']:.4f}")
+    print(f"Triage: {result2['triage']}")
+    if 'connections' in result2:
+        print(f"Graph Connections: {result2['connections']}")
+        print(f"F1 Reuse Risk: {result2['f1_reuse_risk']:.4f}")
+    print()
+    
+    # Example 3: Minimal data
+    print("=" * 60)
+    print("Example 3: Minimal Data Client")
+    print("=" * 60)
+    client3 = {
+        "email": "minimal@example.com",
+    }
+    
+    result3 = validator.validate_client(
+        client_id="client_003",
+        client_data=client3,
+        return_details=True
+    )
+    
+    print(f"Status: {result3['status']}")
+    print(f"Risk Score: {result3['risk_score']:.4f}")
+    print(f"Triage: {result3['triage']}")
+    if 'connections' in result3:
+        print(f"Graph Connections: {result3['connections']}")
+    
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print(f"Client 001: {result1['status']} ({result1['triage']})")
+    print(f"Client 002: {result2['status']} ({result2['triage']})")
+    print(f"Client 003: {result3['status']} ({result3['triage']})")
+    
+    return [result1, result2, result3]
 
 if __name__ == "__main__":
     import sys
