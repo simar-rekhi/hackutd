@@ -176,6 +176,103 @@
         .file-input {
             display: none;
         }
+
+        .processing-status {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9ff;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .processing-status.active {
+            display: block;
+        }
+
+        .status-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-item.processing {
+            border-left: 4px solid #667eea;
+        }
+
+        .status-item.success {
+            border-left: 4px solid #4caf50;
+        }
+
+        .status-item.error {
+            border-left: 4px solid #f44336;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results-section {
+            margin-top: 30px;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        .results-section.active {
+            display: block;
+        }
+
+        .result-item {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9ff;
+            border-radius: 8px;
+        }
+
+        .result-header {
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .result-data {
+            font-size: 14px;
+            color: #555;
+        }
+
+        .result-data table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .result-data td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .result-data td:first-child {
+            font-weight: bold;
+            width: 200px;
+        }
     </style>
 </head>
 <body>
@@ -219,7 +316,13 @@
             <div class="upload-text">Drag and drop PDF files here</div>
             <div class="upload-hint">or click to browse</div>
             <input type="file" id="fileInput" class="file-input" accept=".pdf" multiple>
+            <div class="processing-status" id="processingStatus"></div>
         </div>
+    </div>
+
+    <div class="results-section" id="resultsSection">
+        <h2 class="tickets-header">Extracted Data Results</h2>
+        <div id="resultsContainer"></div>
     </div>
 
     <script>
@@ -270,7 +373,7 @@
             handleFiles(e.target.files);
         });
 
-        function handleFiles(files) {
+        async function handleFiles(files) {
             const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
             
             if (pdfFiles.length === 0) {
@@ -278,9 +381,109 @@
                 return;
             }
 
-            // Files uploaded - you can add functionality here
-            alert(`Successfully uploaded ${pdfFiles.length} PDF file(s).`);
-            toggleUploadArea();
+            const processingStatus = document.getElementById('processingStatus');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsContainer = document.getElementById('resultsContainer');
+            
+            processingStatus.classList.add('active');
+            processingStatus.innerHTML = '';
+            resultsContainer.innerHTML = '';
+            resultsSection.classList.remove('active');
+
+            // Process each file
+            for (let i = 0; i < pdfFiles.length; i++) {
+                const file = pdfFiles[i];
+                const statusItem = document.createElement('div');
+                statusItem.className = 'status-item processing';
+                statusItem.id = `status-${i}`;
+                statusItem.innerHTML = `
+                    <span><span class="spinner"></span>Processing ${file.name}...</span>
+                    <span>Step 1: OCR extraction</span>
+                `;
+                processingStatus.appendChild(statusItem);
+
+                try {
+                    // Create FormData
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    // Update status
+                    statusItem.innerHTML = `
+                        <span><span class="spinner"></span>Processing ${file.name}...</span>
+                        <span>Step 2: Structuring data</span>
+                    `;
+
+                    // Send to API
+                    const response = await fetch('/api/upload-pdf', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok && result.success) {
+                        // Update status to success
+                        statusItem.className = 'status-item success';
+                        statusItem.innerHTML = `
+                            <span>✓ ${file.name} processed successfully</span>
+                            <span>Complete</span>
+                        `;
+
+                        // Display results
+                        displayResult(result);
+                    } else {
+                        // Update status to error
+                        statusItem.className = 'status-item error';
+                        statusItem.innerHTML = `
+                            <span>✗ ${file.name} failed</span>
+                            <span>${result.error || 'Unknown error'}</span>
+                        `;
+                    }
+                } catch (error) {
+                    // Update status to error
+                    statusItem.className = 'status-item error';
+                    statusItem.innerHTML = `
+                        <span>✗ ${file.name} failed</span>
+                        <span>${error.message}</span>
+                    `;
+                }
+            }
+
+            // Show results section if we have any
+            if (resultsContainer.children.length > 0) {
+                resultsSection.classList.add('active');
+            }
+
+            // Close overlay after a delay
+            setTimeout(() => {
+                if (resultsContainer.children.length > 0) {
+                    toggleUploadArea();
+                }
+            }, 2000);
+        }
+
+        function displayResult(result) {
+            const resultsContainer = document.getElementById('resultsContainer');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'result-item';
+            
+            const structuredData = result.structured_data || {};
+            const nonNullData = Object.entries(structuredData).filter(([key, value]) => value !== null && value !== '');
+            
+            let dataTable = '<table>';
+            nonNullData.forEach(([key, value]) => {
+                dataTable += `<tr><td>${key}</td><td>${value}</td></tr>`;
+            });
+            dataTable += '</table>';
+
+            resultDiv.innerHTML = `
+                <div class="result-header">📄 ${result.filename}</div>
+                <div class="result-data">
+                    ${dataTable}
+                </div>
+            `;
+            
+            resultsContainer.appendChild(resultDiv);
         }
     </script>
 </body>
