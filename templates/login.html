@@ -141,6 +141,16 @@
             border-radius: 12px;
             margin-top: 14px;
             display: none;
+            word-wrap: break-word;
+            line-height: 1.6;
+        }
+        .error-message code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+            word-break: break-all;
         }
 
         .footer {
@@ -210,7 +220,7 @@
         }
 
         function showError(msg) {
-            errorEl.textContent = msg || 'Something went wrong.';
+            errorEl.innerHTML = msg || 'Something went wrong.';
             errorEl.style.display = 'block';
         }
 
@@ -242,7 +252,17 @@
                         }
                     } catch (error) {
                         console.error('[login] Callback error:', error);
-                        showError('Authentication failed. Please try again.');
+                        let errorMsg = 'Authentication failed. ';
+                        if (error.error_description) {
+                            errorMsg += error.error_description;
+                        } else if (error.message) {
+                            errorMsg += error.message;
+                        }
+                        // Check for common redirect URI errors
+                        if (error.error === 'invalid_request' || error.error_description?.includes('redirect_uri')) {
+                            errorMsg += '<br><br><strong>Fix:</strong> Add this URL to Auth0 Allowed Callback URLs:<br><code>' + window.location.origin + '/dashboard</code>';
+                        }
+                        showError(errorMsg);
                         setLoading(false);
                     }
                     return;
@@ -261,7 +281,13 @@
                 }
             } catch (error) {
                 console.error('[login] Init error:', error);
-                showError('Unable to initialize Auth0.');
+                let errorMsg = 'Unable to initialize Auth0. ';
+                if (error.message) {
+                    errorMsg += error.message;
+                }
+                errorMsg += '<br><br>Current origin: <code>' + window.location.origin + '</code>';
+                errorMsg += '<br>Make sure this URL is added to Auth0 Allowed Callback URLs.';
+                showError(errorMsg);
                 setLoading(false);
             }
         }

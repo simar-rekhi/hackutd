@@ -102,6 +102,11 @@ def employee_dashboard():
     # Employee view (Goldman Sachs reviewers)
     return render_template('server/employee_dashboard.html')
 
+@app.route('/validation/<client_id>')
+def validation_page(client_id):
+    """Validation page for reviewing client data before final approval."""
+    return render_template('validation.html', client_id=client_id)
+
 # =========================
 # (Gabe) PDF processing endpoints - UNCHANGED IN BEHAVIOR
 # =========================
@@ -127,16 +132,55 @@ def process_pdf():
         file.save(temp_path)
 
         # Run your ML/Nemotron/Gemini OCR pipeline (Gabe)
-        result = process_pdf_file(temp_path)
+        # Use DATASET_COLUMNS if available, otherwise use fallback list
+        dataset_columns = DATASET_COLUMNS if DATASET_COLUMNS else [
+            "4th_party_list", "account_structure", "adverse_event_notification", "adverse_media_screen",
+            "aml_risk_rating", "api_access", "api_credentials", "articles_of_association", "audit_rights",
+            "authentication_method", "authorized_signatories", "bank_account_number_masked", "bank_name",
+            "bank_routing_number", "bank_swift_code", "bankruptcy_history", "bcp_rpo", "bcp_rto",
+            "beneficiary_bank_details", "billing_contact", "business_continuity_plan", "business_license",
+            "certificate_of_incorporation", "change_notification_policy", "comments_notes",
+            "conflict_of_interest_declaration", "connectivity_requirements", "consent_for_info_sharing",
+            "contact_email", "contact_name", "contact_phone", "contact_role", "contract_termination_clause",
+            "country_risk", "credit_reference", "credit_score", "currency", "custodial_instructions",
+            "cybersecurity_posture_summary", "data_flow_diagram", "data_privacy_compliance (GDPR/CCPA)",
+            "data_processing_addendum", "data_storage_location", "dba_name", "director_list",
+            "disaster_recovery_plan", "encryption_standards", "entity_type", "escalation_contacts",
+            "expected_transaction_profile", "fatca_crs_certification", "fee_schedule", "financial_statements",
+            "fraud_label", "go_live_date", "government_id_number", "government_id_type", "implementation_plan",
+            "insurance_expiry_date", "insurance_policy_number", "insurance_provider", "insurance_type",
+            "integration_requirements", "iso27001_cert", "jurisdiction", "jurisdiction_risk", "key_personnel_list",
+            "kpis", "legal_disputes_history", "legal_name", "mailing_address", "management_accounts",
+            "msasigned", "nda_signed", "negative_media_alerts", "on_site_audit_report", "ongoing_monitoring_trigger",
+            "operational_address", "ownership_structure", "payment_terms", "penetration_test_summary", "pep_status",
+            "pricing_schedule", "product_type", "proof_of_address", "proof_of_insurance", "proof_of_license",
+            "purpose_of_account", "registered_address", "registration_number", "regulatory_actions_disclosed",
+            "regulatory_licenses", "renewal_notice_period", "review_frequency", "risk_assessment_rating",
+            "sanctions_screen_result", "service_agreement_scope", "services_requested", "settlement_instructions",
+            "shareholder_register", "slas", "soc2_report", "source_of_funds", "source_of_wealth_docs",
+            "subcontractor_list", "tax_id_number", "tax_id_type", "tax_residency_country", "test_environment_access",
+            "trading_limits", "transaction_limits", "transaction_monitoring_thresholds", "ubo_dob", "ubo_names",
+            "ubo_nationality", "ubo_ownership_percentage", "uptime_guarantee", "vat_gst_registration",
+            "w9_w8_form_type", "watchlist_monitoring_consent"
+        ]
+        result = process_pdf_file(temp_path, dataset_columns)
+        
+        # Generate client_data_id if not present in result
+        if 'client_data_id' not in result:
+            result['client_data_id'] = str(uuid.uuid4())
 
         # Build client_data payload
         client_data_id = result.get('client_data_id') or str(uuid.uuid4())
         structured = result.get('structured_data') or {}
+        
+        # Get user email from request if available (from Auth0 session)
+        user_email = request.form.get('user_email') or request.headers.get('X-User-Email') or None
 
         # Persist JSON locally (always)
         out = {
             'client_data_id': client_data_id,
             'filename': filename,
+            'user_email': user_email,  # Store user email for client dashboard access
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
             'structured_data': structured
@@ -443,8 +487,38 @@ def api_get_client(client_id):
 
     return jsonify({"error": "client not found"}), 404
 
+@app.route('/api/my-clients', methods=['GET'])
+def api_get_my_clients():
+    """
+    Returns client data for the authenticated user based on user_email.
+    """
+    try:
+        user_email = request.args.get('user_email')
+        if not user_email:
+            return jsonify({"error": "user_email parameter required"}), 400
+        
+        if not os.path.isdir(JSON_STORAGE_DIR):
+            return jsonify({"documents": [], "count": 0})
+        
+        items = []
+        for path in glob.glob(os.path.join(JSON_STORAGE_DIR, "*.json")):
+            filename = os.path.basename(path)
+            obj = _safe_load(path)
+            if not obj:
+                continue
+            # Filter by user_email if it matches
+            if obj.get("user_email") == user_email:
+                items.append(_summarize_client(obj, filename))
+        
+        # Sort by most recent first
+        items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return jsonify({"documents": items, "count": len(items)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # =========================
 # Run
 # =========================
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Run on localhost (single device setup)
+    app.run(host='127.0.0.1', port=5000, debug=True)

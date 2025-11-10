@@ -1,6 +1,6 @@
 {
-  "client_data_id": "dummy-success-001-guaranteed-pass",
-  "filename": "dummy-success-client.pdf",
+  "client_data_id": "success",
+  "filename": "success-client.pdf",
   "structured_data": {
     "legal_name": "SecureTech Solutions Inc",
     "dba_name": "SecureTech",

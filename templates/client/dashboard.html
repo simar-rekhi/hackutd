@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Goldman Sachs - Onboarding Dashboard</title>
-  <style>
+    <title>Goldman Sachs - Onboarding Dashboard</title>
+    <style>
     /* --- (Gabe) styles unchanged; merged with Sneha visual --- */
     * { margin:0; padding:0; box-sizing:border-box; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
-      background: linear-gradient(135deg, #0a1929 0%, #001e3c 50%, #0a1929 100%);
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            background: linear-gradient(135deg, #0a1929 0%, #001e3c 50%, #0a1929 100%);
       background-attachment: fixed; min-height:100vh; padding:20px; color:#fff; position:relative;
     }
-    body::before {
+        body::before {
       content:''; position:fixed; inset:0;
       background:
         radial-gradient(circle at 20% 30%, rgba(0,123,255,.12) 0%, transparent 50%),
@@ -51,7 +51,7 @@
     .modal{position:fixed;inset:0;background:rgba(2,6,23,.6);display:none;align-items:center;justify-content:center}
     .modal .panel{background:#0b1326;border:1px solid rgba(59,130,246,.25);border-radius:16px;padding:16px;width:min(520px,96vw)}
     .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
-  </style>
+    </style>
 </head>
 <body>
   <div class="container">
@@ -62,12 +62,14 @@
           <div style="font-weight:700">Onboarding</div>
           <div style="font-size:.9rem;color:#a5b4fc">Upload & validation</div>
         </div>
-      </div>
+    </div>
       <div class="user">
+        <a href="/employee-dashboard" class="btn btn-secondary" style="text-decoration:none;display:inline-block;margin-right:8px">Employee View</a>
+        <a href="/validation-handler" class="btn btn-secondary" style="text-decoration:none;display:inline-block;margin-right:8px">Validation Handler</a>
         <span id="userEmail" style="color:#c7d2fe"></span>
         <img id="userAvatar" src="" alt="avatar"/>
         <button id="logout-btn" class="btn btn-secondary">Logout</button>
-      </div>
+                </div>
     </header>
 
     <div id="loadingScreen" class="card">Loading your dashboard…</div>
@@ -81,13 +83,20 @@
             <button id="browseBtn" class="btn btn-primary" type="button">Browse</button>
             <input id="fileInput" type="file" accept="application/pdf" multiple style="display:none"/>
             <div id="fileList" class="file-list"></div>
-          </div>
+            </div>
           <div id="statusList" class="status-list"></div>
         </div>
 
         <div class="card">
-          <div class="section-title">Result</div>
-          <pre id="resultView" class="result">No results yet.</pre>
+          <div class="section-title">My Client Data</div>
+          <div id="clientDataList" style="margin-top:12px"></div>
+          <div id="resultView" style="margin-top:16px;display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <div class="section-title" style="margin:0">Client Details</div>
+              <button id="closeResultBtn" class="btn btn-secondary" style="font-size:.85rem">Close</button>
+            </div>
+            <pre class="result" id="resultContent"></pre>
+          </div>
           <ul id="tickets" class="tickets"></ul>
         </div>
       </section>
@@ -105,38 +114,38 @@
             <button type="submit" class="btn btn-primary">Save & Continue</button>
           </div>
         </form>
-      </div>
+        </div>
     </div>
-  </div>
+    </div>
 
   <!-- Auth0 -->
-  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
-  <script>
+    <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
+    <script>
     let auth0Client, currentUser = null;
 
     function isGoldmanSachsEmail(email){ if(!email) return false; const e = email.toLowerCase(); return e.endsWith('@goldmansachs.com') || e.endsWith('@gs.com'); }
-
-    const uploadArea = document.getElementById('uploadArea');
-    const fileInput = document.getElementById('fileInput');
-    const logoutBtn = document.getElementById('logout-btn');
+        
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const logoutBtn = document.getElementById('logout-btn');
     const loadingScreen = document.getElementById('loadingScreen');
     const dashboardContent = document.getElementById('dashboardContent');
     const ticketsEl = document.getElementById('tickets');
     const resultView = document.getElementById('resultView');
 
-    async function initAuth0() {
-      try {
-        auth0Client = await window.auth0.createAuth0Client({
-          domain: 'dev-zr25lcrbfq321v7f.us.auth0.com',
-          clientId: 'koEERgWqiyyNe3Ry1QSAbLtKyahWdg2y',
+        async function initAuth0() {
+            try {
+                auth0Client = await window.auth0.createAuth0Client({
+                    domain: 'dev-zr25lcrbfq321v7f.us.auth0.com',
+                    clientId: 'koEERgWqiyyNe3Ry1QSAbLtKyahWdg2y',
           authorizationParams: { redirect_uri: window.location.origin + '/dashboard' },
-          cacheLocation: 'localstorage'
-        });
+                    cacheLocation: 'localstorage'
+                });
 
         // If returned from Auth0
-        const query = window.location.search;
-        if (query.includes('code=') && query.includes('state=')) {
-          await auth0Client.handleRedirectCallback();
+                const query = window.location.search;
+                if (query.includes('code=') && query.includes('state=')) {
+                        await auth0Client.handleRedirectCallback();
           history.replaceState({}, document.title, '/dashboard');
         }
 
@@ -149,23 +158,26 @@
         // Route GS employees to their dashboard
         if (isGoldmanSachsEmail(currentUser?.email)) {
           window.location.replace('/employee-dashboard');
-          return;
-        }
+                    return;
+                }
 
-        loadingScreen.style.display = 'none';
+                loadingScreen.style.display = 'none';
         dashboardContent.classList.remove('hidden');
 
         // Load user docs into the ticket list (Gabe)
         await loadUserDocuments();
+        
+        // Load user's client data
+        await loadMyClientData();
       } catch (e) {
         console.error('Auth0 init error:', e);
-        window.location.href = '/login';
-      }
-    }
+                window.location.href = '/login';
+            }
+        }
 
-    function displayUserInfo(user) {
-      const userEmail = document.getElementById('userEmail');
-      const userAvatar = document.getElementById('userAvatar');
+        function displayUserInfo(user) {
+            const userEmail = document.getElementById('userEmail');
+            const userAvatar = document.getElementById('userAvatar');
       userEmail.textContent = user?.email || 'Unknown';
       userAvatar.src = user?.picture || 'https://i.pravatar.cc/100?img=5';
     }
@@ -192,6 +204,7 @@
           // (1) Gabe: ML pipeline endpoint
           const form = new FormData();
           form.append('file', file);
+          form.append('user_email', currentUser?.email || '');  // Include user email
           const res = await fetch('/api/process-pdf', { method: 'POST', body: form });
           const result = await res.json();
 
@@ -199,6 +212,8 @@
             statusItem.innerHTML = `<span>✓ ${file.name} processed successfully</span><span>Complete</span>`;
             displayResult(result);
             await checkCompletenessAndProceed(result);
+            // Reload client data list after successful upload
+            await loadMyClientData();
           } else {
             statusItem.className = 'status-item error';
             statusItem.innerHTML = `<span>✗ ${file.name} failed</span><span>${result.error || 'Unknown error'}</span>`;
@@ -253,7 +268,7 @@
 
       const form = document.getElementById('missingDataForm');
       form.onsubmit = async (e) => {
-        e.preventDefault();
+            e.preventDefault();
         const formData = new FormData(form);
         const payload = {};
         formData.forEach((v,k)=>payload[k]=v);
@@ -302,13 +317,101 @@
       } catch (e) { console.warn('loadUserDocuments error', e); }
     }
 
+    async function loadMyClientData() {
+      try {
+        const clientDataList = document.getElementById('clientDataList');
+        const res = await fetch(`/api/my-clients?user_email=${encodeURIComponent(currentUser.email)}`);
+        const data = await res.json();
+        
+        if (!Array.isArray(data?.documents) || data.documents.length === 0) {
+          clientDataList.innerHTML = '<div style="color:#a5b4fc;padding:12px">No client data yet. Upload a PDF to get started.</div>';
+                return;
+            }
+
+        clientDataList.innerHTML = '';
+        data.documents.forEach(client => {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:12px;border:1px solid rgba(148,163,184,.2);border-radius:10px;margin-bottom:8px;background:rgba(255,255,255,.03);cursor:pointer;transition:.15s';
+          item.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-weight:700;color:#e0e7ff">${client.preview?.legal_name || client.filename}</div>
+                <div style="font-size:.85rem;color:#a5b4fc;margin-top:4px">${client.filename} • ${client.completeness_pct}% complete</div>
+              </div>
+              <div style="font-size:.75rem;padding:4px 8px;border-radius:999px;border:1px solid rgba(148,163,184,.25);color:#93c5fd">
+                ${client.required_present}/${client.required_total}
+              </div>
+            </div>
+          `;
+          item.addEventListener('click', () => viewClientData(client.client_data_id));
+          item.addEventListener('mouseenter', () => {
+            item.style.background = 'rgba(59,130,246,.08)';
+            item.style.borderColor = '#60a5fa';
+          });
+          item.addEventListener('mouseleave', () => {
+            item.style.background = 'rgba(255,255,255,.03)';
+            item.style.borderColor = 'rgba(148,163,184,.2)';
+          });
+          clientDataList.appendChild(item);
+        });
+      } catch (e) { 
+        console.error('loadMyClientData error', e);
+        document.getElementById('clientDataList').innerHTML = '<div style="color:#f87171;padding:12px">Error loading client data.</div>';
+      }
+    }
+
+    async function viewClientData(clientId) {
+      try {
+        const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}`);
+        if (!res.ok) {
+          alert('Failed to load client data');
+          return;
+        }
+        const data = await res.json();
+        const resultView = document.getElementById('resultView');
+        const resultContent = document.getElementById('resultContent');
+        resultContent.textContent = JSON.stringify(data.raw, null, 2);
+        resultView.style.display = 'block';
+        resultView.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (e) {
+        console.error('viewClientData error', e);
+        alert('Error loading client data');
+      }
+    }
+
+    // Close result view button handler
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.id === 'closeResultBtn') {
+        document.getElementById('resultView').style.display = 'none';
+      }
+    });
+
     // ======= Logout =======
     logoutBtn.addEventListener('click', async () => {
-      await auth0Client.logout({ logoutParams: { returnTo: window.location.origin + '/login' }});
+      try {
+        if (auth0Client) {
+          await auth0Client.logout({ 
+            logoutParams: { 
+              returnTo: window.location.origin + '/login' 
+            } 
+          });
+        } else {
+          // Fallback if auth0Client not initialized
+          localStorage.clear();
+          sessionStorage.clear();
+          window.location.href = '/login';
+        }
+      } catch (error) {
+        console.error('Logout error:', error);
+        // Fallback logout
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/login';
+      }
     });
 
     // Init
-    window.addEventListener('load', initAuth0);
-  </script>
+        window.addEventListener('load', initAuth0);
+    </script>
 </body>
 </html>

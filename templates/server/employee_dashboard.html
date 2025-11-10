@@ -51,7 +51,9 @@
         </div>
       </div>
       <div class="toolbar">
-        <a class="btn btn-secondary" href="/login">Switch Account</a>
+        <a href="/dashboard" class="btn btn-secondary" style="text-decoration:none;display:inline-block;margin-right:8px">Client View</a>
+        <a href="/validation-handler" class="btn btn-secondary" style="text-decoration:none;display:inline-block;margin-right:8px">Validation Handler</a>
+        <button id="logoutBtn" class="btn btn-secondary">Logout</button>
       </div>
     </header>
 
@@ -109,6 +111,7 @@
       const raw = payload.raw || {};
       const sd = (raw.structured_data || {});
       const miss = s.required_missing || [];
+      const isComplete = miss.length === 0;
 
       detailEl.classList.remove('empty');
       detailEl.innerHTML = `
@@ -137,12 +140,41 @@
           <div>${miss.length ? miss.map(m => `<span class="pill miss">${m.replace(/_/g,' ')}</span>`).join('') : '<span class="pill">None 🎉</span>'}</div>
         </div>
 
+        ${isComplete ? `
+        <div class="section">
+          <button id="sendToValidationBtn" class="btn" style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;width:100%;padding:14px;font-size:1rem;margin-top:8px">
+            Send to Validation
+          </button>
+        </div>
+        ` : ''}
+
         <div class="section">
           <div style="font-weight:800;margin-bottom:6px">Raw JSON</div>
           <pre class="json">${JSON.stringify(raw, null, 2)}</pre>
         </div>
       `;
+
+      // Add event listener for validation button if it exists
+      const btn = document.getElementById('sendToValidationBtn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          // Show loading state
+          btn.disabled = true;
+          btn.style.opacity = '0.6';
+          btn.style.cursor = 'not-allowed';
+          const originalText = btn.textContent;
+          btn.textContent = 'Loading...';
+          
+          // Wait 3 seconds before redirecting
+          setTimeout(() => {
+            window.location.href = `/validation/${encodeURIComponent(s.client_data_id)}`;
+          }, 3000);
+        });
+      }
     }
+
+    let currentClientId = null;
+    let refreshInterval = null;
 
     async function loadList(){
       const res = await fetch('/api/clients');
@@ -151,6 +183,7 @@
     }
 
     async function loadClient(id){
+      currentClientId = id;
       detailEl.innerHTML = '<div class="subtle">Loading…</div>';
       const res = await fetch(`/api/clients/${encodeURIComponent(id)}`);
       if (!res.ok){
@@ -161,7 +194,28 @@
       renderDetail(payload);
     }
 
+    // Auto-refresh for live updates
+    function startAutoRefresh() {
+      if (refreshInterval) clearInterval(refreshInterval);
+      refreshInterval = setInterval(() => {
+        loadList();
+        if (currentClientId) {
+          loadClient(currentClientId);
+        }
+      }, 30000); // Refresh every 30 seconds
+    }
+
+    // Logout functionality
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      // Clear any local storage/auth data
+      localStorage.clear();
+      sessionStorage.clear();
+      // Redirect to login
+      window.location.href = '/login';
+    });
+
     loadList();
+    startAutoRefresh();
   </script>
 </body>
 </html>
